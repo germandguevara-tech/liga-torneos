@@ -637,6 +637,44 @@ async function fetchDatos() {
   };
 }
 
+function BannerInstalar() {
+  const [visible, setVisible] = useState(() => localStorage.getItem('lifhur-banner-cerrado') !== '1');
+
+  if (!visible) return null;
+
+  function cerrar() {
+    localStorage.setItem('lifhur-banner-cerrado', '1');
+    setVisible(false);
+  }
+
+  const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const esAndroid = /android/i.test(navigator.userAgent);
+
+  return (
+    <div style={{ background: "#1a3a2a", border: "1px solid #4ade8040", borderRadius: 14, padding: "13px 14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+      <div style={{ fontSize: 22, flexShrink: 0 }}>📲</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#4ade80", marginBottom: 5 }}>Instalá LifHur en tu celu</div>
+        {esIOS ? (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
+            Tocá el botón <span style={{ color: "#4ade80", fontWeight: 600 }}>Compartir</span> del navegador y elegí <span style={{ color: "#4ade80", fontWeight: 600 }}>"Agregar a pantalla de inicio"</span>
+          </div>
+        ) : esAndroid ? (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
+            Tocá los <span style={{ color: "#4ade80", fontWeight: 600 }}>3 puntitos</span> del navegador y elegí <span style={{ color: "#4ade80", fontWeight: 600 }}>"Agregar a pantalla de inicio"</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
+            <div>📱 <span style={{ fontWeight: 600, color: "#4ade80" }}>Android:</span> tocá los 3 puntitos → "Agregar a pantalla de inicio"</div>
+            <div style={{ marginTop: 3 }}>🍎 <span style={{ fontWeight: 600, color: "#4ade80" }}>iPhone:</span> tocá Compartir → "Agregar a pantalla de inicio"</div>
+          </div>
+        )}
+      </div>
+      <button onClick={cerrar} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 18, cursor: "pointer", padding: "0 2px", flexShrink: 0, lineHeight: 1 }}>✕</button>
+    </div>
+  );
+}
+
 export default function App() {
   const [pantalla, setPantalla] = useState("inicio");
   const [torneoSel, setTorneoSel] = useState(null);
@@ -704,6 +742,7 @@ export default function App() {
           </p>
         </div>
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          {pantalla === "inicio" && <BannerInstalar />}
           {pantalla === "inicio" && torneos.map(t => (
             <div key={t.id} onClick={() => { setTorneoSel(t); setPantalla("zona"); }}
               style={{ background: "#fff", borderRadius: 14, padding: 14, border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>

@@ -1,6 +1,10 @@
 import { db } from "./firebase";
 import { collection, doc, setDoc } from "firebase/firestore";
 
+const LIGA_ID = "lifhur";
+const ligaRef = doc(db, "ligas", LIGA_ID);
+const col = (nombre) => collection(ligaRef, nombre);
+
 const torneos = [
   { id: "FIM", nombre: "Fútbol Infantil Masculino", color: "#86efac", orden: 1 },
   { id: "FIF", nombre: "Fútbol Infantil Femenino", color: "#f9a8d4", orden: 2 },
@@ -72,22 +76,22 @@ const partidos = [
 export async function cargarDatosPrueba() {
   try {
     for (const torneo of torneos) {
-      await setDoc(doc(collection(db, "torneos"), torneo.id), torneo);
+      await setDoc(doc(col("torneos"), torneo.id), torneo);
     }
     for (const cat of categorias) {
-      await setDoc(doc(collection(db, "categorias"), cat.id), { lista: cat.lista });
+      await setDoc(doc(col("categorias"), cat.id), { lista: cat.lista });
     }
     for (const zona of zonas) {
-      await setDoc(doc(collection(db, "zonas"), zona.nombre), zona);
+      await setDoc(doc(col("zonas"), zona.nombre), zona);
     }
     for (const club of clubes) {
-      await setDoc(doc(collection(db, "clubes"), String(club.id)), club);
+      await setDoc(doc(col("clubes"), String(club.id)), club);
     }
     for (const jugador of jugadores) {
-      await setDoc(doc(collection(db, "jugadores"), String(jugador.id)), jugador);
+      await setDoc(doc(col("jugadores"), String(jugador.id)), jugador);
     }
     for (const partido of partidos) {
-      await setDoc(doc(collection(db, "partidos"), String(partido.id)), partido);
+      await setDoc(doc(col("partidos"), String(partido.id)), partido);
     }
     console.log("Datos de prueba cargados correctamente.");
     return { ok: true };

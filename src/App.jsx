@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, createContext } from "react";
 import { db } from "./firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, doc, getDocs } from "firebase/firestore";
 
 const DatosContext = createContext({});
 
@@ -613,14 +613,19 @@ const CATEGORIAS_DEFAULT = {
 };
 const ZONAS_DEFAULT = ["Zona A", "Zona B", "Zona C"];
 
-async function fetchDatos() {
+const LIGA_ID = "lifhur";
+
+async function fetchDatos(ligaId = LIGA_ID) {
+  const ligaRef = doc(db, "ligas", ligaId);
+  const col = (nombre) => collection(ligaRef, nombre);
+
   const [clubesSnap, jugadoresSnap, partidosSnap, torneosSnap, categoriasSnap, zonasSnap] = await Promise.all([
-    getDocs(collection(db, "clubes")),
-    getDocs(collection(db, "jugadores")),
-    getDocs(collection(db, "partidos")),
-    getDocs(collection(db, "torneos")),
-    getDocs(collection(db, "categorias")),
-    getDocs(collection(db, "zonas")),
+    getDocs(col("clubes")),
+    getDocs(col("jugadores")),
+    getDocs(col("partidos")),
+    getDocs(col("torneos")),
+    getDocs(col("categorias")),
+    getDocs(col("zonas")),
   ]);
 
   const torneosFS = torneosSnap.docs.map(d => d.data()).sort((a, b) => a.orden - b.orden);

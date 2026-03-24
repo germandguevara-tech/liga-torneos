@@ -6,15 +6,15 @@ import Ligas from "./screens/Ligas";
 import Liga from "./screens/Liga";
 import Temporada from "./screens/Temporada";
 import Competencia from "./screens/Competencia";
-import TorneoDetalle from "./screens/TorneoDetalle";
+import ZonaAdmin from "./screens/ZonaAdmin";
 
 export default function PanelAdmin() {
   const navigate = useNavigate();
-  const [pantalla, setPantalla] = useState("ligas"); // ligas | liga | temporada | competencia | torneo
-  const [ligaSeleccionada, setLigaSeleccionada] = useState(null);
-  const [temporadaSeleccionada, setTemporadaSeleccionada] = useState(null);
-  const [competenciaSeleccionada, setCompetenciaSeleccionada] = useState(null);
-  const [torneoSeleccionado, setTorneoSeleccionado] = useState(null);
+  const [pantalla, setPantalla] = useState("ligas"); // ligas | liga | temporada | competencia | zona
+  const [ligaSeleccionada,       setLigaSeleccionada]       = useState(null);
+  const [temporadaSeleccionada,  setTemporadaSeleccionada]  = useState(null);
+  const [competenciaSeleccionada,setCompetenciaSeleccionada] = useState(null);
+  const [zonaSeleccionada,       setZonaSeleccionada]       = useState(null);
 
   async function handleCerrarSesion() {
     await signOut(auth);
@@ -36,18 +36,18 @@ export default function PanelAdmin() {
     setPantalla("competencia");
   }
 
-  function irATorneo(torneo) {
-    setTorneoSeleccionado(torneo);
-    setPantalla("torneo");
+  function irAZona(zona) {
+    setZonaSeleccionada(zona);
+    setPantalla("zona");
   }
 
-  if (pantalla === "torneo") {
+  if (pantalla === "zona") {
     return (
-      <TorneoDetalle
+      <ZonaAdmin
         liga={ligaSeleccionada}
         temporada={temporadaSeleccionada}
         competencia={competenciaSeleccionada}
-        torneo={torneoSeleccionado}
+        zona={zonaSeleccionada}
         onBack={() => setPantalla("competencia")}
       />
     );
@@ -60,7 +60,7 @@ export default function PanelAdmin() {
         temporada={temporadaSeleccionada}
         competencia={competenciaSeleccionada}
         onBack={() => setPantalla("temporada")}
-        onSeleccionarTorneo={irATorneo}
+        onSeleccionarZona={irAZona}
       />
     );
   }

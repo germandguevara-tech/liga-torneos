@@ -27,8 +27,13 @@ function calcularPosiciones(clubes, jugadores, partidos) {
 }
 
 function Escudo({ club, size = 28 }) {
+  if (club.logoUrl) {
+    return (
+      <img src={club.logoUrl} alt={club.nombre} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: `1.5px solid ${(club.color || "#4ade80") + "70"}` }} />
+    );
+  }
   return (
-    <div style={{ width: size, height: size, borderRadius: "50%", background: club.color + "35", border: `1.5px solid ${club.color}70`, display: "flex", alignItems: "center", justifyContent: "center", color: "#1a1a1a", fontWeight: 700, fontSize: size * 0.3, flexShrink: 0 }}>
+    <div style={{ width: size, height: size, borderRadius: "50%", background: (club.color || "#4ade80") + "35", border: `1.5px solid ${(club.color || "#4ade80") + "70"}`, display: "flex", alignItems: "center", justifyContent: "center", color: "#1a1a1a", fontWeight: 700, fontSize: size * 0.3, flexShrink: 0 }}>
       {club.siglas}
     </div>
   );

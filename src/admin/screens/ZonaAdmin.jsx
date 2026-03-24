@@ -193,7 +193,7 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
           <TabCategorias categorias={categorias} cargando={cargandoCats} onAgregar={() => setModalCat(true)} onEliminar={setPendingDelCat} onToggleVisible={toggleVisibleCat} />
         )}
         {tab === "fixture" && (
-          <FixtureAdmin zonaRef={zonaRef} zona={zona} />
+          <FixtureAdmin zonaRef={zonaRef} zona={zona} ligaId={liga.docId} />
         )}
         {tab === "tablas" && (
           <TabTablas

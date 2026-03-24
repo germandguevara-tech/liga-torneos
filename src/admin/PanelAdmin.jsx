@@ -7,10 +7,11 @@ import Liga from "./screens/Liga";
 import Temporada from "./screens/Temporada";
 import Competencia from "./screens/Competencia";
 import ZonaAdmin from "./screens/ZonaAdmin";
+import JugadoresAdmin from "./screens/JugadoresAdmin";
 
 export default function PanelAdmin() {
   const navigate = useNavigate();
-  const [pantalla, setPantalla] = useState("ligas"); // ligas | liga | temporada | competencia | zona
+  const [pantalla, setPantalla] = useState("ligas"); // ligas | liga | temporada | competencia | zona | jugadores
   const [ligaSeleccionada,       setLigaSeleccionada]       = useState(null);
   const [temporadaSeleccionada,  setTemporadaSeleccionada]  = useState(null);
   const [competenciaSeleccionada,setCompetenciaSeleccionada] = useState(null);
@@ -41,6 +42,21 @@ export default function PanelAdmin() {
     setPantalla("zona");
   }
 
+  function irAJugadores() {
+    setPantalla("jugadores");
+  }
+
+  if (pantalla === "jugadores") {
+    return (
+      <JugadoresAdmin
+        liga={ligaSeleccionada}
+        temporada={temporadaSeleccionada}
+        competencia={competenciaSeleccionada}
+        onBack={() => setPantalla("competencia")}
+      />
+    );
+  }
+
   if (pantalla === "zona") {
     return (
       <ZonaAdmin
@@ -61,6 +77,7 @@ export default function PanelAdmin() {
         competencia={competenciaSeleccionada}
         onBack={() => setPantalla("temporada")}
         onSeleccionarZona={irAZona}
+        onIrAJugadores={irAJugadores}
       />
     );
   }

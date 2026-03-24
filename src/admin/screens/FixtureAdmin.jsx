@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, doc, updateDoc, writeBatch } from "firebase/firestore";
+import { collection, getDocs, doc, updateDoc, writeBatch, query, where } from "firebase/firestore";
 import { db } from "../../firebase";
 import { Card, Modal, Switch, BtnPrimary, Campo, InputAdmin, SelectAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
 
@@ -24,7 +24,7 @@ function calcRondas(slots) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function FixtureAdmin({ zonaRef, zona }) {
+export default function FixtureAdmin({ zonaRef, zona, ligaId }) {
   const [publicado,  setPublicado]  = useState(zona.publicado ?? false);
   const [clubes,     setClubes]     = useState([]);
   const [categorias, setCategorias] = useState([]);
@@ -44,7 +44,7 @@ export default function FixtureAdmin({ zonaRef, zona }) {
 
   if (cargando) return <Spinner />;
 
-  if (publicado) return <PostPublicacion zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} />;
+  if (publicado) return <PostPublicacion zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} ligaId={ligaId} />;
   return <PrePublicacion zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} onPublicado={() => setPublicado(true)} />;
 }
 
@@ -263,7 +263,7 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // POST-PUBLICACIÓN
 // ══════════════════════════════════════════════════════════════════════════════
-function PostPublicacion({ zonaRef, zona, clubes, categorias }) {
+function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId }) {
   const [catSelId,   setCatSelId]   = useState(categorias[0]?.docId || "");
   const [partidos,   setPartidos]   = useState([]);
   const [cargando,   setCargando]   = useState(false);
@@ -346,6 +346,7 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias }) {
         <GolesModal
           partido={modalGoles}
           clubes={clubes}
+          ligaId={ligaId}
           onGuardar={async d => { await guardarResultado(modalGoles, d); setModalGoles(null); }}
           onClose={() => setModalGoles(null)}
         />
@@ -461,25 +462,45 @@ function LibreRow({ partido, clubes }) {
 }
 
 // ── Modal goles y tarjetas ────────────────────────────────────────────────────
-function GolesModal({ partido, clubes, onGuardar, onClose }) {
+function GolesModal({ partido, clubes, ligaId, onGuardar, onClose }) {
   const [goles,    setGoles]    = useState(partido.goles    || []);
   const [tarjetas, setTarjetas] = useState(partido.tarjetas || []);
-  const [fGol,     setFGol]     = useState({ nombre: "", equipo: "local", cantidad: "1" });
-  const [fTarj,    setFTarj]    = useState({ nombre: "", equipo: "local", tipo: "amarilla" });
+  const [fGol,  setFGol]  = useState({ dni: "", nombre: "", equipo: "local", cantidad: "1" });
+  const [fTarj, setFTarj] = useState({ dni: "", nombre: "", equipo: "local", tipo: "amarilla" });
+  const [buscandoGol,  setBuscandoGol]  = useState(false);
+  const [buscandoTarj, setBuscandoTarj] = useState(false);
+  const [infoGol,  setInfoGol]  = useState(null); // { apellido, nombre }
+  const [infoTarj, setInfoTarj] = useState(null);
 
   const lN = clubes.find(c => c.docId === partido.localId)?.nombre     || partido.localNombre     || "Local";
   const vN = clubes.find(c => c.docId === partido.visitanteId)?.nombre  || partido.visitanteNombre || "Visitante";
   const eqLbl = eq => eq === "local" ? lN : vN;
 
-  const agrGol  = () => {
+  async function buscarDni(dni, setBuscando, setInfo, setForm) {
+    if (!ligaId || dni.length < 7) { setInfo(null); return; }
+    setBuscando(true);
+    const snap = await getDocs(query(collection(db, "ligas", ligaId, "jugadores"), where("dni", "==", dni)));
+    if (!snap.empty) {
+      const j = snap.docs[0].data();
+      setInfo(j);
+      setForm(f => ({ ...f, nombre: `${j.apellido}, ${j.nombre}` }));
+    } else {
+      setInfo(null);
+    }
+    setBuscando(false);
+  }
+
+  const agrGol = () => {
     if (!fGol.nombre.trim()) return;
     setGoles(g => [...g, { nombre: fGol.nombre.trim(), equipo: fGol.equipo, cantidad: Math.max(1, parseInt(fGol.cantidad) || 1) }]);
-    setFGol(f => ({ ...f, nombre: "" }));
+    setFGol({ dni: "", nombre: "", equipo: fGol.equipo, cantidad: "1" });
+    setInfoGol(null);
   };
   const agrTarj = () => {
     if (!fTarj.nombre.trim()) return;
     setTarjetas(t => [...t, { nombre: fTarj.nombre.trim(), equipo: fTarj.equipo, tipo: fTarj.tipo }]);
-    setFTarj(f => ({ ...f, nombre: "" }));
+    setFTarj({ dni: "", nombre: "", equipo: fTarj.equipo, tipo: fTarj.tipo });
+    setInfoTarj(null);
   };
 
   return (
@@ -491,6 +512,22 @@ function GolesModal({ partido, clubes, onGuardar, onClose }) {
           <button onClick={() => setGoles(gs => gs.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 14 }}>✕</button>
         </div>
       ))}
+      {ligaId && (
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+          <Campo label="DNI (refuerzo)" style={{ width: 110, flexShrink: 0 }}>
+            <InputAdmin
+              value={fGol.dni}
+              onChange={e => { setFGol(f => ({ ...f, dni: e.target.value })); setInfoGol(null); }}
+              onBlur={() => buscarDni(fGol.dni, setBuscandoGol, setInfoGol, setFGol)}
+              placeholder="Opcional"
+              style={{ width: 110 }}
+            />
+          </Campo>
+          <div style={{ fontSize: 10, color: buscandoGol ? "#9ca3af" : infoGol ? "#166534" : "transparent", paddingBottom: 10, whiteSpace: "nowrap" }}>
+            {buscandoGol ? "Buscando..." : infoGol ? `✓ ${infoGol.apellido}, ${infoGol.nombre}` : "·"}
+          </div>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 6, alignItems: "end" }}>
         <Campo label="Jugador"><InputAdmin value={fGol.nombre} onChange={e => setFGol(f => ({ ...f, nombre: e.target.value }))} onKeyDown={e => e.key === "Enter" && agrGol()} placeholder="Nombre" /></Campo>
         <Campo label="Equipo"><SelectAdmin value={fGol.equipo} onChange={e => setFGol(f => ({ ...f, equipo: e.target.value }))}><option value="local">{lN}</option><option value="visitante">{vN}</option></SelectAdmin></Campo>
@@ -505,6 +542,22 @@ function GolesModal({ partido, clubes, onGuardar, onClose }) {
           <button onClick={() => setTarjetas(ts => ts.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 14 }}>✕</button>
         </div>
       ))}
+      {ligaId && (
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+          <Campo label="DNI (refuerzo)" style={{ width: 110, flexShrink: 0 }}>
+            <InputAdmin
+              value={fTarj.dni}
+              onChange={e => { setFTarj(f => ({ ...f, dni: e.target.value })); setInfoTarj(null); }}
+              onBlur={() => buscarDni(fTarj.dni, setBuscandoTarj, setInfoTarj, setFTarj)}
+              placeholder="Opcional"
+              style={{ width: 110 }}
+            />
+          </Campo>
+          <div style={{ fontSize: 10, color: buscandoTarj ? "#9ca3af" : infoTarj ? "#166534" : "transparent", paddingBottom: 10, whiteSpace: "nowrap" }}>
+            {buscandoTarj ? "Buscando..." : infoTarj ? `✓ ${infoTarj.apellido}, ${infoTarj.nombre}` : "·"}
+          </div>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 6, alignItems: "end" }}>
         <Campo label="Jugador"><InputAdmin value={fTarj.nombre} onChange={e => setFTarj(f => ({ ...f, nombre: e.target.value }))} onKeyDown={e => e.key === "Enter" && agrTarj()} placeholder="Nombre" /></Campo>
         <Campo label="Equipo"><SelectAdmin value={fTarj.equipo} onChange={e => setFTarj(f => ({ ...f, equipo: e.target.value }))}><option value="local">{lN}</option><option value="visitante">{vN}</option></SelectAdmin></Campo>

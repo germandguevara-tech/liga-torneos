@@ -13,7 +13,7 @@ const PARTICIPANTES_LABEL = {
   equipos: "Equipos independientes",
 };
 
-export default function Competencia({ liga, temporada, competencia, onBack, onSeleccionarZona }) {
+export default function Competencia({ liga, temporada, competencia, onBack, onSeleccionarZona, onIrAJugadores }) {
   const [zonas, setZonas]           = useState([]);
   const [cargando, setCargando]     = useState(true);
   const [modal, setModal]           = useState(false);
@@ -69,6 +69,16 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
         onAccion={() => setModal(true)}
       />
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, maxWidth: 600, margin: "0 auto" }}>
+        {/* Jugadores */}
+        <div onClick={onIrAJugadores} style={{ background: "#fff", borderRadius: 14, border: "1px solid #dcfce7", boxShadow: "0 1px 6px rgba(0,0,0,0.06)", padding: "13px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+          <div style={{ width: 42, height: 42, borderRadius: 12, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>👥</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>Gestión de Jugadores</div>
+            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Carga masiva, manual y duplicados</div>
+          </div>
+          <span style={{ fontSize: 18, color: "#9ca3af" }}>›</span>
+        </div>
+
         {cargando ? <Spinner /> : zonas.length === 0 ? (
           <EmptyState emoji="🗂" titulo="Sin zonas" descripcion="Creá la primera zona de esta competencia" />
         ) : (

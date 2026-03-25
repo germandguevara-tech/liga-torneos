@@ -29,11 +29,18 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
 
   async function cargar() {
     setCargando(true);
-    const snap = await getDocs(zonasCol);
-    const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
-    items.sort((a, b) => (a.creadoEn || 0) - (b.creadoEn || 0));
-    setZonas(items);
-    setCargando(false);
+    setError("");
+    try {
+      const snap = await getDocs(zonasCol);
+      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+      items.sort((a, b) => (a.creadoEn || 0) - (b.creadoEn || 0));
+      setZonas(items);
+    } catch (e) {
+      console.error("Error cargando zonas:", e);
+      setError("Error al cargar zonas: " + e.message);
+    } finally {
+      setCargando(false);
+    }
   }
 
   useEffect(() => { cargar(); }, []);
@@ -79,7 +86,13 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
           <span style={{ fontSize: 18, color: "#9ca3af" }}>›</span>
         </div>
 
-        {cargando ? <Spinner /> : zonas.length === 0 ? (
+        {error && !cargando && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 13 }}>
+            {error}
+            <button onClick={cargar} style={{ marginLeft: 10, textDecoration: "underline", background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>Reintentar</button>
+          </div>
+        )}
+        {cargando ? <Spinner /> : zonas.length === 0 && !error ? (
           <EmptyState emoji="🗂" titulo="Sin zonas" descripcion="Creá la primera zona de esta competencia" />
         ) : (
           <>

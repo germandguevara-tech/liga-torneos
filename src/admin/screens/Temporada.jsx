@@ -18,11 +18,18 @@ export default function Temporada({ liga, temporada, onBack, onSeleccionarCompet
 
   async function cargar() {
     setCargando(true);
-    const snap = await getDocs(compCol);
-    const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
-    items.sort((a, b) => (a.creadaEn || 0) - (b.creadaEn || 0));
-    setCompetencias(items);
-    setCargando(false);
+    setError("");
+    try {
+      const snap = await getDocs(compCol);
+      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+      items.sort((a, b) => (a.creadaEn || 0) - (b.creadaEn || 0));
+      setCompetencias(items);
+    } catch (e) {
+      console.error("Error cargando competencias:", e);
+      setError("Error al cargar competencias: " + e.message);
+    } finally {
+      setCargando(false);
+    }
   }
 
   useEffect(() => { cargar(); }, []);
@@ -62,7 +69,13 @@ export default function Temporada({ liga, temporada, onBack, onSeleccionarCompet
         onAccion={() => setModal(true)}
       />
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, maxWidth: 600, margin: "0 auto" }}>
-        {cargando ? <Spinner /> : competencias.length === 0 ? (
+        {error && !cargando && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 13 }}>
+            {error}
+            <button onClick={cargar} style={{ marginLeft: 10, textDecoration: "underline", background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>Reintentar</button>
+          </div>
+        )}
+        {cargando ? <Spinner /> : competencias.length === 0 && !error ? (
           <EmptyState emoji="🎯" titulo="Sin competencias" descripcion="Creá la primera competencia de esta temporada" />
         ) : (
           <>

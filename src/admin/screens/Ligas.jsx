@@ -14,19 +14,26 @@ export default function Ligas({ onSeleccionar }) {
 
   async function cargar() {
     setCargando(true);
-    const lifhurRef = doc(db, "ligas", "lifhur");
-    const lifhurSnap = await getDoc(lifhurRef);
-    if (!lifhurSnap.exists()) {
-      await setDoc(lifhurRef, {
-        id: "lifhur",
-        nombre: "LifHur",
-        descripcion: "Liga de Fútbol Hurlingam",
-        creadaEn: Date.now(),
-      });
+    setError("");
+    try {
+      const lifhurRef = doc(db, "ligas", "lifhur");
+      const lifhurSnap = await getDoc(lifhurRef);
+      if (!lifhurSnap.exists()) {
+        await setDoc(lifhurRef, {
+          id: "lifhur",
+          nombre: "LifHur",
+          descripcion: "Liga de Fútbol Hurlingam",
+          creadaEn: Date.now(),
+        });
+      }
+      const snap = await getDocs(collection(db, "ligas"));
+      setLigas(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
+    } catch (e) {
+      console.error("Error cargando ligas:", e);
+      setError("Error al cargar datos: " + e.message);
+    } finally {
+      setCargando(false);
     }
-    const snap = await getDocs(collection(db, "ligas"));
-    setLigas(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
-    setCargando(false);
   }
 
   useEffect(() => { cargar(); }, []);
@@ -62,7 +69,13 @@ export default function Ligas({ onSeleccionar }) {
     <div style={{ minHeight: "100vh", background: "#f0fdf4", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       <HeaderAdmin titulo="Ligas" accionLabel="+ Liga" onAccion={() => setModal(true)} />
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, maxWidth: 600, margin: "0 auto" }}>
-        {cargando ? <Spinner /> : ligas.length === 0 ? (
+        {error && !cargando && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 13 }}>
+            {error}
+            <button onClick={cargar} style={{ marginLeft: 10, textDecoration: "underline", background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>Reintentar</button>
+          </div>
+        )}
+        {cargando ? <Spinner /> : ligas.length === 0 && !error ? (
           <EmptyState emoji="🏟️" titulo="Sin ligas" descripcion="Creá la primera liga" />
         ) : (
           <>

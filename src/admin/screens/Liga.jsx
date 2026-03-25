@@ -19,11 +19,18 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
 
   async function cargar() {
     setCargando(true);
-    const snap = await getDocs(tempCol);
-    const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
-    items.sort((a, b) => (b.anio || 0) - (a.anio || 0));
-    setTemporadas(items);
-    setCargando(false);
+    setError("");
+    try {
+      const snap = await getDocs(tempCol);
+      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+      items.sort((a, b) => (b.anio || 0) - (a.anio || 0));
+      setTemporadas(items);
+    } catch (e) {
+      console.error("Error cargando temporadas:", e);
+      setError("Error al cargar temporadas: " + e.message);
+    } finally {
+      setCargando(false);
+    }
   }
 
   useEffect(() => { cargar(); }, []);
@@ -62,7 +69,13 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
     <div style={{ minHeight: "100vh", background: "#f0fdf4", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       <HeaderAdmin titulo={liga.nombre} subtitulo="Temporadas" onBack={onBack} accionLabel="+ Temporada" onAccion={() => setModal(true)} />
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, maxWidth: 600, margin: "0 auto" }}>
-        {cargando ? <Spinner /> : temporadas.length === 0 ? (
+        {error && !cargando && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 13 }}>
+            {error}
+            <button onClick={cargar} style={{ marginLeft: 10, textDecoration: "underline", background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>Reintentar</button>
+          </div>
+        )}
+        {cargando ? <Spinner /> : temporadas.length === 0 && !error ? (
           <EmptyState emoji="📅" titulo="Sin temporadas" descripcion="Creá la primera temporada" />
         ) : (
           <>

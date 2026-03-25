@@ -75,18 +75,28 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
 
   async function cargarClubes() {
     setCargandoClubes(true);
-    const snap = await getDocs(clubesCol);
-    setClubes(snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.nombre.localeCompare(b.nombre)));
-    setCargandoClubes(false);
+    try {
+      const snap = await getDocs(clubesCol);
+      setClubes(snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    } catch (e) {
+      console.error("Error cargando clubes:", e);
+    } finally {
+      setCargandoClubes(false);
+    }
   }
 
   async function cargarCategorias() {
     setCargandoCats(true);
-    const snap = await getDocs(catsCol);
-    const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
-    items.sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999));
-    setCategorias(items);
-    setCargandoCats(false);
+    try {
+      const snap = await getDocs(catsCol);
+      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+      items.sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999));
+      setCategorias(items);
+    } catch (e) {
+      console.error("Error cargando categorías:", e);
+    } finally {
+      setCargandoCats(false);
+    }
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────

@@ -291,7 +291,8 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId }) {
   if (categorias.length === 0) return <EmptyState emoji="📋" titulo="Sin categorías" descripcion="Este torneo no tiene categorías configuradas" />;
 
   const jornadaNumbers = [...new Set(partidos.map(p => p.jornada))].sort((a, b) => a - b);
-  const partidosFecha  = partidos.filter(p => p.jornada === jornadaSel);
+  const partidosFecha  = partidos.filter(p => p.jornada === jornadaSel)
+    .sort((a, b) => (a.esLibre ? 1 : 0) - (b.esLibre ? 1 : 0));
 
   return (
     <>

@@ -287,7 +287,8 @@ function TabFixture({ partidos, clubes, onVerPartido }) {
 
   if (jornadas.length === 0) return <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin partidos cargados</div>;
 
-  const grupo  = partidos.filter(p => p.jornada === jornadaSel && !p.esLibre);
+  const grupo   = partidos.filter(p => p.jornada === jornadaSel && !p.esLibre);
+  const libres  = partidos.filter(p => p.jornada === jornadaSel && p.esLibre);
   const jugados = grupo.filter(p => p.jugado).length;
   const selectArrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23166534' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`;
 
@@ -319,6 +320,21 @@ function TabFixture({ partidos, clubes, onVerPartido }) {
             </span>
           </div>
           {grupo.map(p => <PartidoLineal key={p.docId} partido={p} clubes={clubes} onClick={onVerPartido} />)}
+          {libres.map(p => {
+            const club = clubes.find(c => c.docId === (p.localId || p.visitanteId));
+            return (
+              <div key={p.docId} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderTop: "1px solid #f0fdf4", gap: 8 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", overflow: "hidden", minWidth: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#9ca3af", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{club?.nombre || "—"}</span>
+                  <Escudo club={club} size={22} />
+                </div>
+                <div style={{ flexShrink: 0, minWidth: 76, textAlign: "center" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#854d0e", background: "#fef9c3", border: "1px solid #fde047", padding: "2px 10px", borderRadius: 20 }}>LIBRE</span>
+                </div>
+                <div style={{ flex: 1 }} />
+              </div>
+            );
+          })}
         </Card>
       )}
     </div>

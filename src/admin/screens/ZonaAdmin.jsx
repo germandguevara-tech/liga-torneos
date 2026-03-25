@@ -181,6 +181,7 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
             categorias={categorias}
             guardar={guardarConfig} guardando={guardandoConfig}
             moverCriterio={moverCriterio}
+            publicado={zona.publicado ?? false}
           />
         )}
         {tab === "participantes" && (
@@ -222,25 +223,48 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB CONFIG
 // ══════════════════════════════════════════════════════════════════════════════
-function TabConfig({ config, setConfig, tablaConf, setTablaConf, tablaAcumConf, setTablaAcumConf, zonas, zonaId, categorias, guardar, guardando, moverCriterio }) {
+const TIPO_LABEL_MAP        = { liga: "Liga", copa: "Copa" };
+const PARTICIPANTES_LABEL_MAP = { clubes: "Clubes con categorías", equipos: "Equipos independientes" };
+
+function TabConfig({ config, setConfig, tablaConf, setTablaConf, tablaAcumConf, setTablaAcumConf, zonas, zonaId, categorias, guardar, guardando, moverCriterio, publicado }) {
   const catsSelIds = tablaConf.tablaGeneralCategorias || [];
   return (
     <>
       <SeccionLabel>Tipo de torneo</SeccionLabel>
       <Card>
         <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <Campo label="Formato">
-            <SelectAdmin value={config.tipo} onChange={e => setConfig(c => ({ ...c, tipo: e.target.value }))}>
-              <option value="liga">Liga</option>
-              <option value="copa">Copa</option>
-            </SelectAdmin>
-          </Campo>
-          <Campo label="Participantes">
-            <SelectAdmin value={config.tipoParticipantes} onChange={e => setConfig(c => ({ ...c, tipoParticipantes: e.target.value }))}>
-              <option value="clubes">Clubes con categorías</option>
-              <option value="equipos">Equipos independientes</option>
-            </SelectAdmin>
-          </Campo>
+          {publicado ? (
+            <>
+              <div style={{ background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 8, padding: "7px 12px", fontSize: 12, color: "#92400e", fontWeight: 600, marginBottom: 2 }}>
+                🔒 Torneo publicado — formato y participantes bloqueados
+              </div>
+              <Campo label="Formato">
+                <div style={{ padding: "9px 12px", fontSize: 13, color: "#374151", background: "#f9fafb", borderRadius: 10, border: "1px solid #e5e7eb" }}>
+                  {TIPO_LABEL_MAP[config.tipo] || config.tipo}
+                </div>
+              </Campo>
+              <Campo label="Participantes">
+                <div style={{ padding: "9px 12px", fontSize: 13, color: "#374151", background: "#f9fafb", borderRadius: 10, border: "1px solid #e5e7eb" }}>
+                  {PARTICIPANTES_LABEL_MAP[config.tipoParticipantes] || config.tipoParticipantes}
+                </div>
+              </Campo>
+            </>
+          ) : (
+            <>
+              <Campo label="Formato">
+                <SelectAdmin value={config.tipo} onChange={e => setConfig(c => ({ ...c, tipo: e.target.value }))}>
+                  <option value="liga">Liga</option>
+                  <option value="copa">Copa</option>
+                </SelectAdmin>
+              </Campo>
+              <Campo label="Participantes">
+                <SelectAdmin value={config.tipoParticipantes} onChange={e => setConfig(c => ({ ...c, tipoParticipantes: e.target.value }))}>
+                  <option value="clubes">Clubes con categorías</option>
+                  <option value="equipos">Equipos independientes</option>
+                </SelectAdmin>
+              </Campo>
+            </>
+          )}
         </div>
       </Card>
 

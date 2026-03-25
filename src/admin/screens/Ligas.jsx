@@ -106,13 +106,17 @@ export default function Ligas({ onSeleccionar }) {
           colorPrincipal: form.colorPrincipal,
           colorAcento:    form.colorAcento,
           colorFondo:     form.colorFondo,
+          nombre:         form.nombre.trim(),
         },
         creadaEn: Date.now(),
       };
       await setDoc(doc(db, "ligas", idLimpio), datos);
       if (logoFile) {
         const logoUrl = await subirLogo(idLimpio);
-        await updateDoc(doc(db, "ligas", idLimpio), { logoUrl });
+        await updateDoc(doc(db, "ligas", idLimpio), {
+          logoUrl,
+          "configuracion.logoUrl": logoUrl,
+        });
       }
       cerrarModal();
       await cargar();
@@ -126,17 +130,23 @@ export default function Ligas({ onSeleccionar }) {
     if (!form.nombre.trim()) { setError("El nombre es requerido"); return; }
     setGuardando(true);
     try {
+      const existingLogoUrl = ligaEdit.configuracion?.logoUrl || ligaEdit.logoUrl || null;
+      const conf = {
+        colorPrincipal: form.colorPrincipal,
+        colorAcento:    form.colorAcento,
+        colorFondo:     form.colorFondo,
+        nombre:         form.nombre.trim(),
+        ...(existingLogoUrl ? { logoUrl: existingLogoUrl } : {}),
+      };
       const updates = {
-        nombre:       form.nombre.trim(),
-        descripcion:  form.descripcion.trim(),
-        configuracion: {
-          colorPrincipal: form.colorPrincipal,
-          colorAcento:    form.colorAcento,
-          colorFondo:     form.colorFondo,
-        },
+        nombre:        form.nombre.trim(),
+        descripcion:   form.descripcion.trim(),
+        configuracion: conf,
       };
       if (logoFile) {
-        updates.logoUrl = await subirLogo(ligaEdit.docId);
+        const logoUrl = await subirLogo(ligaEdit.docId);
+        updates.logoUrl         = logoUrl;
+        updates.configuracion   = { ...conf, logoUrl };
       }
       await updateDoc(doc(db, "ligas", ligaEdit.docId), updates);
       cerrarModal();

@@ -3,7 +3,7 @@ import { db } from "./firebase";
 import { collection, doc, getDocs, getDoc, query, where } from "firebase/firestore";
 
 const LIGA_ID = import.meta.env.VITE_LIGA_ID || "lifhur";
-const CFG_DEFAULT = { nombre: "LifHur", color: "#1a3a2a", acento: "#4ade80", suave: "#f0fdf4" };
+const CFG_DEFAULT = { nombre: "LifHur", color: "#1a3a2a", acento: "#4ade80", suave: "#f0fdf4", logoUrl: null };
 const CfgCtx = createContext(CFG_DEFAULT);
 const sombra = "0 1px 6px rgba(0,0,0,0.06)";
 
@@ -814,10 +814,11 @@ export default function App() {
       const d    = snap.data();
       const conf = d.configuracion || {};
       setCfg({
-        nombre: d.nombre                   || CFG_DEFAULT.nombre,
-        color:  conf.colorPrincipal        || CFG_DEFAULT.color,
-        acento: conf.colorAcento           || CFG_DEFAULT.acento,
-        suave:  conf.colorFondo            || CFG_DEFAULT.suave,
+        nombre:  conf.nombre         || d.nombre      || CFG_DEFAULT.nombre,
+        color:   conf.colorPrincipal                  || CFG_DEFAULT.color,
+        acento:  conf.colorAcento                     || CFG_DEFAULT.acento,
+        suave:   conf.colorFondo                      || CFG_DEFAULT.suave,
+        logoUrl: conf.logoUrl        || d.logoUrl     || null,
       });
     }).catch(err => console.error("Error cargando configuración:", err));
   }, []);

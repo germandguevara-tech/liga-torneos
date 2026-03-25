@@ -1,7 +1,7 @@
 {
   "name": "LifHur - Liga de Fútbol",
   "short_name": "LifHur",
-  "description": "Seguimiento de torneos, posiciones y estadísticas de la liga",
+  "description": "Seguimiento de torneos, posiciones y estadísticas",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, createContext, useContext } from "react";
 import { db } from "./firebase";
 import { collection, doc, getDocs, getDoc, query, where } from "firebase/firestore";
 
-const LIGA_ID = "lifhur";
+const LIGA_ID = import.meta.env.VITE_LIGA_ID || "lifhur";
 const CFG_DEFAULT = { nombre: "LifHur", color: "#1a3a2a", acento: "#4ade80", suave: "#f0fdf4" };
 const CfgCtx = createContext(CFG_DEFAULT);
 const sombra = "0 1px 6px rgba(0,0,0,0.06)";
@@ -765,9 +765,9 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
 // ── Banner instalar ───────────────────────────────────────────────────────────
 function BannerInstalar() {
   const cfg = useContext(CfgCtx);
-  const [visible, setVisible] = useState(() => localStorage.getItem("lifhur-banner-cerrado") !== "1");
+  const [visible, setVisible] = useState(() => localStorage.getItem(`${LIGA_ID}-banner-cerrado`) !== "1");
   if (!visible) return null;
-  function cerrar() { localStorage.setItem("lifhur-banner-cerrado", "1"); setVisible(false); }
+  function cerrar() { localStorage.setItem(`${LIGA_ID}-banner-cerrado`, "1"); setVisible(false); }
   const esIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const esAndroid = /android/i.test(navigator.userAgent);
   return (

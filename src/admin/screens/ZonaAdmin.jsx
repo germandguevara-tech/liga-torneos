@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, setDoc } from "firebase/firestore";
+import { collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, setDoc, query, where } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../../firebase";
 import { HeaderAdmin, Card, Modal, ConfirmModal, Switch, BtnPrimary, Campo, InputAdmin, SelectAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
@@ -164,6 +164,7 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
     { id: "categorias", label: "Categorías" },
     { id: "fixture",    label: "Fixture"    },
     { id: "tablas",     label: "Tablas"     },
+    { id: "sanciones",  label: "Sanciones"  },
   ];
 
   return (
@@ -210,6 +211,14 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
             zonaRef={zonaRef} zona={zona}
             clubes={clubes} categorias={categorias}
             tablaConf={tablaConf} setTablaConf={setTablaConf}
+          />
+        )}
+        {tab === "sanciones" && (
+          <TabSanciones
+            zonaRef={zonaRef}
+            ligaId={liga.docId}
+            clubes={clubes}
+            categorias={categorias}
           />
         )}
       </div>
@@ -717,6 +726,321 @@ function BtnFlecha({ onClick, label, disabled }) {
 function BtnDel({ onClick }) {
   return (
     <button onClick={onClick} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: "4px 6px", flexShrink: 0 }}>🗑</button>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TAB SANCIONES
+// ══════════════════════════════════════════════════════════════════════════════
+function TabSanciones({ zonaRef, ligaId, clubes, categorias }) {
+  const susCol = collection(zonaRef, "suspensiones");
+  const [suspensiones, setSuspensiones] = useState([]);
+  const [cargando,     setCargando]     = useState(true);
+  const [modal,        setModal]        = useState(false);
+  const [pendingDel,   setPendingDel]   = useState(null);
+
+  async function obtenerJornadaActual() {
+    if (categorias.length === 0) return 0;
+    const maxPorCat = await Promise.all(
+      categorias.map(cat =>
+        getDocs(collection(doc(collection(zonaRef, "categorias"), cat.docId), "partidos"))
+          .then(snap =>
+            snap.docs
+              .map(d => d.data())
+              .filter(p => p.jugado)
+              .reduce((m, p) => Math.max(m, p.jornada || 0), 0)
+          )
+          .catch(() => 0)
+      )
+    );
+    return Math.max(0, ...maxPorCat);
+  }
+
+  async function cargar() {
+    setCargando(true);
+    try {
+      const [snap, jornadaActual] = await Promise.all([
+        getDocs(susCol),
+        obtenerJornadaActual(),
+      ]);
+
+      let items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+
+      // Auto-marcar cumplidas cuando la fecha en que vuelve ya pasó
+      const aAutoMarcar = items.filter(
+        s => !s.cumplida && jornadaActual > 0 && s.fechaVuelve <= jornadaActual
+      );
+      if (aAutoMarcar.length > 0) {
+        await Promise.all(
+          aAutoMarcar.map(s =>
+            updateDoc(doc(susCol, s.docId), { cumplida: true, modoCumplida: "auto" })
+          )
+        );
+        items = items.map(s =>
+          aAutoMarcar.find(a => a.docId === s.docId)
+            ? { ...s, cumplida: true, modoCumplida: "auto" }
+            : s
+        );
+      }
+
+      items.sort((a, b) => (b.creadoEn || 0) - (a.creadoEn || 0));
+      setSuspensiones(items);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => { cargar(); }, []);
+
+  async function marcarCumplida(sus) {
+    await updateDoc(doc(susCol, sus.docId), { cumplida: true, modoCumplida: "manual" });
+    setSuspensiones(prev =>
+      prev.map(s => s.docId === sus.docId ? { ...s, cumplida: true, modoCumplida: "manual" } : s)
+    );
+  }
+
+  async function confirmarEliminar() {
+    await deleteDoc(doc(susCol, pendingDel.docId));
+    setPendingDel(null);
+    setSuspensiones(prev => prev.filter(s => s.docId !== pendingDel.docId));
+  }
+
+  const activos      = suspensiones.filter(s => !s.cumplida);
+  const cumplAuto    = suspensiones.filter(s => s.cumplida && s.modoCumplida === "auto");
+  const cumplManual  = suspensiones.filter(s => s.cumplida && s.modoCumplida !== "auto");
+
+  function ChipsSancion({ s }) {
+    return (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+        <span style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>
+          Sancionado F{s.fechaSancion}
+        </span>
+        <span style={{ fontSize: 11, background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>
+          {s.cantidadFechas} fecha{s.cantidadFechas !== 1 ? "s" : ""}
+        </span>
+        <span style={{ fontSize: 11, background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>
+          Vuelve F{s.fechaVuelve}
+        </span>
+      </div>
+    );
+  }
+
+  function FilaHistorial({ s, badge, badgeBg, badgeColor }) {
+    return (
+      <Card key={s.docId} style={{ opacity: 0.75 }}>
+        <div style={{ padding: "11px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>{s.jugadorNombre}</div>
+            <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 1 }}>
+              {s.clubNombre}{s.categoriaNombre ? ` · ${s.categoriaNombre}` : ""}
+              {" · "}F{s.fechaSancion} · {s.cantidadFechas} fecha{s.cantidadFechas !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <span style={{ fontSize: 11, background: badgeBg, color: badgeColor, padding: "2px 8px", borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>{badge}</span>
+          <BtnDel onClick={() => setPendingDel(s)} />
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <BtnAccion onClick={() => setModal(true)}>+ Sanción</BtnAccion>
+      </div>
+
+      {cargando ? <Spinner /> : (
+        <>
+          {/* ── Activos ── */}
+          <SeccionLabel>Activos</SeccionLabel>
+          {activos.length === 0
+            ? <EmptyState emoji="✅" titulo="Sin sancionados activos" descripcion="No hay jugadores con suspensiones pendientes" />
+            : activos.map(s => (
+              <Card key={s.docId}>
+                <div style={{ padding: "13px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{s.jugadorNombre}</div>
+                      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                        {s.clubNombre}{s.categoriaNombre ? ` · ${s.categoriaNombre}` : ""}
+                      </div>
+                      <ChipsSancion s={s} />
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      <button
+                        onClick={() => marcarCumplida(s)}
+                        style={{ background: "#dcfce7", border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#166534" }}>
+                        ✓ Cumplida
+                      </button>
+                      <BtnDel onClick={() => setPendingDel(s)} />
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            ))
+          }
+
+          {/* ── Cumplidas automáticamente ── */}
+          {cumplAuto.length > 0 && (
+            <>
+              <SeccionLabel>Cumplidas automáticamente</SeccionLabel>
+              {cumplAuto.map(s => (
+                <FilaHistorial key={s.docId} s={s} badge="Auto ✓" badgeBg="#e0f2fe" badgeColor="#0369a1" />
+              ))}
+            </>
+          )}
+
+          {/* ── Cumplidas manualmente ── */}
+          {cumplManual.length > 0 && (
+            <>
+              <SeccionLabel>Cumplidas manualmente</SeccionLabel>
+              {cumplManual.map(s => (
+                <FilaHistorial key={s.docId} s={s} badge="Manual ✓" badgeBg="#f0fdf4" badgeColor="#166534" />
+              ))}
+            </>
+          )}
+        </>
+      )}
+
+      {modal && (
+        <ModalNuevaSancion
+          zonaRef={zonaRef}
+          ligaId={ligaId}
+          clubes={clubes}
+          categorias={categorias}
+          onGuardar={() => { setModal(false); cargar(); }}
+          onClose={() => setModal(false)}
+        />
+      )}
+      {pendingDel && (
+        <ConfirmModal
+          mensaje={`Eliminás la sanción de "${pendingDel.jugadorNombre}".`}
+          onConfirmar={confirmarEliminar}
+          onCancelar={() => setPendingDel(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function ModalNuevaSancion({ zonaRef, ligaId, clubes, categorias, onGuardar, onClose }) {
+  const [dni,           setDni]           = useState("");
+  const [jugador,       setJugador]       = useState(null);
+  const [buscando,      setBuscando]      = useState(false);
+  const [errBusqueda,   setErrBusqueda]   = useState("");
+  const [cantFechas,    setCantFechas]    = useState("1");
+  const [fechaSancion,  setFechaSancion]  = useState("1");
+  const [guardando,     setGuardando]     = useState(false);
+
+  async function buscarJugador() {
+    const dniBuscar = dni.trim();
+    if (!dniBuscar) return;
+    setBuscando(true);
+    setErrBusqueda("");
+    setJugador(null);
+    try {
+      const q    = query(collection(db, "ligas", ligaId, "jugadores"), where("dni", "==", dniBuscar));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        setErrBusqueda("No se encontró ningún jugador con ese DNI");
+      } else {
+        setJugador({ docId: snap.docs[0].id, ...snap.docs[0].data() });
+      }
+    } catch (e) {
+      setErrBusqueda("Error al buscar: " + e.message);
+    } finally {
+      setBuscando(false);
+    }
+  }
+
+  async function guardar() {
+    if (!jugador) return;
+    setGuardando(true);
+    try {
+      const club = clubes.find(c => c.docId === jugador.clubId);
+      const cat  = categorias.find(c => c.docId === jugador.categoriaId);
+      const cant = Math.max(1, parseInt(cantFechas) || 1);
+      const fsan = Math.max(1, parseInt(fechaSancion) || 1);
+      await addDoc(collection(zonaRef, "suspensiones"), {
+        jugadorDocId:   jugador.docId,
+        jugadorDni:     dni.trim(),
+        jugadorNombre:  `${jugador.apellido}, ${jugador.nombre}`,
+        clubId:         jugador.clubId   || "",
+        clubNombre:     club?.nombre     || "",
+        categoriaId:    jugador.categoriaId || "",
+        categoriaNombre: cat?.nombre    || "",
+        cantidadFechas: cant,
+        fechaSancion:   fsan,
+        fechaVuelve:    fsan + cant,
+        cumplida:       false,
+        creadoEn:       Date.now(),
+      });
+      onGuardar();
+    } catch (e) {
+      setErrBusqueda("Error al guardar: " + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const fechaVuelvePreview = (Math.max(1, parseInt(fechaSancion) || 1)) + (Math.max(1, parseInt(cantFechas) || 1));
+
+  return (
+    <Modal titulo="Nueva Sanción" onClose={onClose}>
+      <Campo label="DNI del jugador">
+        <div style={{ display: "flex", gap: 8 }}>
+          <InputAdmin
+            placeholder="12345678"
+            value={dni}
+            onChange={e => { setDni(e.target.value); setJugador(null); setErrBusqueda(""); }}
+            onKeyDown={e => e.key === "Enter" && buscarJugador()}
+            style={{ flex: 1 }}
+          />
+          <button
+            onClick={buscarJugador}
+            disabled={buscando || !dni.trim()}
+            style={{ background: "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 8, padding: "0 14px", cursor: "pointer", fontSize: 13, fontWeight: 700, flexShrink: 0, opacity: buscando || !dni.trim() ? 0.5 : 1 }}>
+            {buscando ? "..." : "Buscar"}
+          </button>
+        </div>
+      </Campo>
+
+      {errBusqueda && <div style={{ color: "#dc2626", fontSize: 13 }}>{errBusqueda}</div>}
+
+      {jugador && (
+        <div style={{ background: "#f0fdf4", borderRadius: 10, padding: "10px 14px" }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{jugador.apellido}, {jugador.nombre}</div>
+          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+            {clubes.find(c => c.docId === jugador.clubId)?.nombre || "—"}
+            {categorias.find(c => c.docId === jugador.categoriaId)?.nombre ? ` · ${categorias.find(c => c.docId === jugador.categoriaId)?.nombre}` : ""}
+          </div>
+        </div>
+      )}
+
+      <Campo label="Fecha del fixture en que fue sancionado">
+        <InputAdmin
+          type="number" min="1"
+          value={fechaSancion}
+          onChange={e => setFechaSancion(e.target.value)}
+        />
+      </Campo>
+
+      <Campo label="Fechas de suspensión">
+        <InputAdmin
+          type="number" min="1"
+          value={cantFechas}
+          onChange={e => setCantFechas(e.target.value)}
+        />
+      </Campo>
+
+      <div style={{ background: "#f0fdf4", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#166534", fontWeight: 600 }}>
+        Vuelve a jugar en la fecha {fechaVuelvePreview}
+      </div>
+
+      <BtnPrimary onClick={guardar} disabled={!jugador || guardando} fullWidth>
+        {guardando ? "Guardando..." : "Guardar sanción"}
+      </BtnPrimary>
+    </Modal>
   );
 }
 

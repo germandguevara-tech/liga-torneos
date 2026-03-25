@@ -469,68 +469,58 @@ function TabVallas({ partidos, clubes }) {
   );
 }
 
-function TabSancionados({ partidos, clubes }) {
-  const { suspendidos, acumuladores } = useMemo(() => {
-    const mapa = {};
-    partidos.filter(p => p.jugado && Array.isArray(p.tarjetas)).forEach(p => {
-      p.tarjetas.forEach(t => {
-        const key = `${t.nombre}||${t.equipo}`;
-        if (!mapa[key]) mapa[key] = { nombre: t.nombre, clubId: t.equipo, amarillas: 0, rojas: 0 };
-        if (t.tipo === "amarilla") mapa[key].amarillas++;
-        else if (t.tipo === "roja") mapa[key].rojas++;
-      });
-    });
-    const lista = Object.values(mapa);
-    return {
-      suspendidos:  lista.filter(j => j.rojas > 0).sort((a, b) => b.rojas - a.rojas),
-      acumuladores: lista.filter(j => j.amarillas >= 3).sort((a, b) => b.amarillas - a.amarillas),
-    };
-  }, [partidos]);
+function TabSancionados({ zonaRef }) {
+  const [activos,   setActivos]   = useState([]);
+  const [cargando,  setCargando]  = useState(true);
 
-  function FilaJug({ jug, etiqueta, etiquetaColor, etiquetaBg, detalle }) {
-    const club = clubes.find(c => c.docId === jug.clubId);
+  useEffect(() => {
+    getDocs(collection(zonaRef, "suspensiones"))
+      .then(snap => {
+        const items = snap.docs
+          .map(d => ({ docId: d.id, ...d.data() }))
+          .filter(s => !s.cumplida)
+          .sort((a, b) => (a.fechaVuelve || 0) - (b.fechaVuelve || 0));
+        setActivos(items);
+      })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  if (cargando) return <Spinner />;
+
+  if (activos.length === 0) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderTop: "1px solid #f0fdf4" }}>
-        <Escudo club={club} size={28} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{jug.nombre}</div>
-          <div style={{ fontSize: 11, color: "#6b7280", marginTop: 1 }}>{club?.nombre || "—"}</div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: etiquetaColor, background: etiquetaBg, padding: "2px 8px", borderRadius: 20 }}>{etiqueta}</span>
-          {detalle && <span style={{ fontSize: 11, color: "#6b7280" }}>{detalle}</span>}
-        </div>
+      <div style={{ textAlign: "center", padding: 28, color: "#9ca3af", fontSize: 13 }}>
+        Sin sancionados activos
       </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Card>
-        <div style={{ padding: "9px 14px", background: "#dcfce7", display: "flex", alignItems: "center", gap: 6 }}>
-          <span>🔴</span>
-          <span style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>Suspendidos</span>
+    <Card>
+      <div style={{ padding: "9px 14px", background: "#dcfce7", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>🚫</span>
+        <span style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>Sancionados</span>
+      </div>
+      {activos.map((s, i) => (
+        <div key={s.docId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.jugadorNombre}</div>
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 1 }}>
+              {s.clubNombre}{s.categoriaNombre ? ` · ${s.categoriaNombre}` : ""}
+            </div>
+          </div>
+          <div style={{ flexShrink: 0, textAlign: "right" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#991b1b", background: "#fee2e2", padding: "2px 8px", borderRadius: 20 }}>
+              Vuelve fecha {s.fechaVuelve}
+            </div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 3 }}>
+              {s.cantidadFechas} fecha{s.cantidadFechas !== 1 ? "s" : ""}
+            </div>
+          </div>
         </div>
-        {suspendidos.length === 0
-          ? <div style={{ padding: 14, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>Sin jugadores suspendidos</div>
-          : suspendidos.map((j, i) => <FilaJug key={i} jug={j} etiqueta={`${j.rojas} 🔴`} etiquetaColor="#991b1b" etiquetaBg="#fee2e2" detalle="Suspendido" />)
-        }
-      </Card>
-      <Card>
-        <div style={{ padding: "9px 14px", background: "#dcfce7", display: "flex", alignItems: "center", gap: 6 }}>
-          <span>🟡</span>
-          <span style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>Amarillas acumuladas</span>
-          <span style={{ fontSize: 11, color: "#6b7280", marginLeft: "auto" }}>3 o más</span>
-        </div>
-        {acumuladores.length === 0
-          ? <div style={{ padding: 14, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>Sin jugadores en zona de sanción</div>
-          : acumuladores.map((j, i) => <FilaJug key={i} jug={j} etiqueta={`${j.amarillas} 🟡`} etiquetaColor="#92400e" etiquetaBg="#fef3c7" detalle={j.amarillas >= 5 ? "¡Suspendido!" : "En riesgo"} />)
-        }
-        <div style={{ padding: "7px 14px", fontSize: 11, color: "#6b7280", background: "#f0fdf4" }}>
-          Al llegar a 5 amarillas se cumple una fecha de suspensión
-        </div>
-      </Card>
-    </div>
+      ))}
+    </Card>
   );
 }
 
@@ -762,7 +752,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
             {tab === "Fair Play"   && <TabFairPlay partidos={partidos} clubes={clubes} />}
             {tab === "Goleadores"  && <TabGoleadores partidos={partidos} clubes={clubes} />}
             {tab === "Vallas"      && <TabVallas partidos={partidos} clubes={clubes} />}
-            {tab === "Sancionados" && <TabSancionados partidos={partidos} clubes={clubes} />}
+            {tab === "Sancionados" && <TabSancionados zonaRef={zonaRef} />}
           </>
         )}
       </div>
@@ -917,7 +907,12 @@ export default function App() {
             : competencias.map(comp => (
                 <div key={comp.docId} onClick={() => seleccionarComp(comp)}
                   style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>🏆</div>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0, overflow: "hidden" }}>
+                    {comp.logoUrl
+                      ? <img src={comp.logoUrl} alt={comp.nombre} style={{ width: 44, height: 44, objectFit: "cover" }} />
+                      : "🏆"
+                    }
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{comp.nombre}</div>
                     <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{tempSel?.anio}</div>

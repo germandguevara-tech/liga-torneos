@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, createContext, useContext } from "react";
 import { db } from "./firebase";
 import { collection, doc, getDocs, getDoc, query, where } from "firebase/firestore";
 
 const LIGA_ID = "lifhur";
-const cfg = { nombre: "LifHur", color: "#1a3a2a", acento: "#4ade80", suave: "#f0fdf4" };
+const CFG_DEFAULT = { nombre: "LifHur", color: "#1a3a2a", acento: "#4ade80", suave: "#f0fdf4" };
+const CfgCtx = createContext(CFG_DEFAULT);
 const sombra = "0 1px 6px rgba(0,0,0,0.06)";
 
 // ── Utilidades ────────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ function Badge({ color, bg, children }) {
 }
 
 function Header({ onBack, titulo, subtitulo }) {
+  const cfg = useContext(CfgCtx);
   return (
     <div style={{ background: cfg.color, padding: "13px 16px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -63,9 +65,10 @@ function Td({ children, center, bold, color }) {
 }
 
 function Spinner() {
+  const { acento } = useContext(CfgCtx);
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: 32 }}>
-      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid #dcfce7", borderTopColor: "#4ade80", animation: "spin 0.8s linear infinite" }} />
+      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid #dcfce7", borderTopColor: acento, animation: "spin 0.8s linear infinite" }} />
     </div>
   );
 }
@@ -608,6 +611,7 @@ function VistaPartido({ partido, clubes, onBack }) {
 const TABS = ["Posiciones", "Fixture", "Fair Play", "Goleadores", "Vallas", "Sancionados"];
 
 function VistaZona({ liga, temporada, competencia, zona, onBack }) {
+  const cfg = useContext(CfgCtx);
   const [clubes,    setClubes]    = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [catSel,    setCatSel]    = useState(null);
@@ -713,13 +717,13 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
                   border: "1.5px solid rgba(255,255,255,0.25)", borderRadius: 10,
                   padding: "7px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
                   outline: "none", appearance: "none",
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234ade80' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='${encodeURIComponent(cfg.acento)}' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
                   backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
                   paddingRight: 36,
                 }}
               >
                 {opciones.map(o => (
-                  <option key={o.id} value={o.id} style={{ background: "#1a3a2a", color: "#fff" }}>{o.label}</option>
+                  <option key={o.id} value={o.id} style={{ background: cfg.color, color: "#fff" }}>{o.label}</option>
                 ))}
               </select>
             </div>
@@ -730,8 +734,8 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
                 padding: "7px 11px", borderRadius: "8px 8px 0 0", border: "none", fontSize: 11,
                 cursor: "pointer", whiteSpace: "nowrap", fontWeight: tab === t ? 700 : 500,
                 background: "transparent",
-                color: tab === t ? "#4ade80" : "rgba(255,255,255,0.55)",
-                borderBottom: tab === t ? "2px solid #4ade80" : "2px solid transparent",
+                color: tab === t ? cfg.acento : "rgba(255,255,255,0.55)",
+                borderBottom: tab === t ? `2px solid ${cfg.acento}` : "2px solid transparent",
               }}>{t}</button>
             ))}
           </div>
@@ -760,28 +764,29 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
 
 // ── Banner instalar ───────────────────────────────────────────────────────────
 function BannerInstalar() {
+  const cfg = useContext(CfgCtx);
   const [visible, setVisible] = useState(() => localStorage.getItem("lifhur-banner-cerrado") !== "1");
   if (!visible) return null;
   function cerrar() { localStorage.setItem("lifhur-banner-cerrado", "1"); setVisible(false); }
   const esIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const esAndroid = /android/i.test(navigator.userAgent);
   return (
-    <div style={{ background: "#1a3a2a", border: "1px solid #4ade8040", borderRadius: 14, padding: "13px 14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+    <div style={{ background: cfg.color, border: `1px solid ${cfg.acento}40`, borderRadius: 14, padding: "13px 14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
       <div style={{ fontSize: 22, flexShrink: 0 }}>📲</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#4ade80", marginBottom: 5 }}>Instalá LifHur en tu celu</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: cfg.acento, marginBottom: 5 }}>Instalá {cfg.nombre} en tu celu</div>
         {esIOS ? (
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
-            Tocá <span style={{ color: "#4ade80", fontWeight: 600 }}>Compartir</span> y elegí <span style={{ color: "#4ade80", fontWeight: 600 }}>"Agregar a pantalla de inicio"</span>
+            Tocá <span style={{ color: cfg.acento, fontWeight: 600 }}>Compartir</span> y elegí <span style={{ color: cfg.acento, fontWeight: 600 }}>"Agregar a pantalla de inicio"</span>
           </div>
         ) : esAndroid ? (
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
-            Tocá los <span style={{ color: "#4ade80", fontWeight: 600 }}>3 puntitos</span> y elegí <span style={{ color: "#4ade80", fontWeight: 600 }}>"Agregar a pantalla de inicio"</span>
+            Tocá los <span style={{ color: cfg.acento, fontWeight: 600 }}>3 puntitos</span> y elegí <span style={{ color: cfg.acento, fontWeight: 600 }}>"Agregar a pantalla de inicio"</span>
           </div>
         ) : (
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
-            <div>📱 <span style={{ fontWeight: 600, color: "#4ade80" }}>Android:</span> 3 puntitos → "Agregar a pantalla de inicio"</div>
-            <div style={{ marginTop: 3 }}>🍎 <span style={{ fontWeight: 600, color: "#4ade80" }}>iPhone:</span> Compartir → "Agregar a pantalla de inicio"</div>
+            <div>📱 <span style={{ fontWeight: 600, color: cfg.acento }}>Android:</span> 3 puntitos → "Agregar a pantalla de inicio"</div>
+            <div style={{ marginTop: 3 }}>🍎 <span style={{ fontWeight: 600, color: cfg.acento }}>iPhone:</span> Compartir → "Agregar a pantalla de inicio"</div>
           </div>
         )}
       </div>
@@ -792,7 +797,8 @@ function BannerInstalar() {
 
 // ── App principal ─────────────────────────────────────────────────────────────
 export default function App() {
-  const [pantalla,     setPantalla]     = useState("competencias"); // competencias | zonas | zona
+  const [cfg,          setCfg]          = useState(CFG_DEFAULT);
+  const [pantalla,     setPantalla]     = useState("competencias");
   const [tempSel,      setTempSel]      = useState(null);
   const [competencias, setCompetencias] = useState([]);
   const [compSel,      setCompSel]      = useState(null);
@@ -800,6 +806,21 @@ export default function App() {
   const [zonaSel,      setZonaSel]      = useState(null);
   const [cargando,     setCargando]     = useState(true);
   const [error,        setError]        = useState("");
+
+  // Carga nombre y configuración de colores desde ligas/{LIGA_ID}
+  useEffect(() => {
+    getDoc(doc(db, "ligas", LIGA_ID)).then(snap => {
+      if (!snap.exists()) return;
+      const d    = snap.data();
+      const conf = d.configuracion || {};
+      setCfg({
+        nombre: d.nombre                   || CFG_DEFAULT.nombre,
+        color:  conf.colorPrincipal        || CFG_DEFAULT.color,
+        acento: conf.colorAcento           || CFG_DEFAULT.acento,
+        suave:  conf.colorFondo            || CFG_DEFAULT.suave,
+      });
+    }).catch(err => console.error("Error cargando configuración:", err));
+  }, []);
 
   useEffect(() => {
     async function cargar() {
@@ -855,16 +876,18 @@ export default function App() {
   // ── Render zona ──
   if (pantalla === "zona" && zonaSel) {
     return (
-      <div style={{ maxWidth: 480, width: "100%", margin: "0 auto", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-        <VistaZona
-          liga={{ docId: LIGA_ID }}
-          temporada={tempSel}
-          competencia={compSel}
-          zona={zonaSel}
-          onBack={() => { setZonaSel(null); setPantalla("zonas"); }}
-        />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
-      </div>
+      <CfgCtx.Provider value={cfg}>
+        <div style={{ maxWidth: 480, width: "100%", margin: "0 auto", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+          <VistaZona
+            liga={{ docId: LIGA_ID }}
+            temporada={tempSel}
+            competencia={compSel}
+            zona={zonaSel}
+            onBack={() => { setZonaSel(null); setPantalla("zonas"); }}
+          />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
+        </div>
+      </CfgCtx.Provider>
     );
   }
 
@@ -882,63 +905,65 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: 480, width: "100%", margin: "0 auto", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      <div style={{ background: cfg.color, padding: "26px 16px 22px" }}>
-        {pantalla === "zonas" && (
-          <button onClick={backDesdeZonas} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "#bbf7d0", borderRadius: 10, padding: "5px 11px", cursor: "pointer", fontSize: 14, marginBottom: 10, display: "block" }}>←</button>
-        )}
-        <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: 0 }}>{cfg.nombre}</h1>
-        <p style={{ color: "#86efac", fontSize: 13, margin: "4px 0 0" }}>{subtitulo}</p>
-      </div>
+    <CfgCtx.Provider value={cfg}>
+      <div style={{ maxWidth: 480, width: "100%", margin: "0 auto", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+        <div style={{ background: cfg.color, padding: "26px 16px 22px" }}>
+          {pantalla === "zonas" && (
+            <button onClick={backDesdeZonas} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "#bbf7d0", borderRadius: 10, padding: "5px 11px", cursor: "pointer", fontSize: 14, marginBottom: 10, display: "block" }}>←</button>
+          )}
+          <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: 0 }}>{cfg.nombre}</h1>
+          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, margin: "4px 0 0" }}>{subtitulo}</p>
+        </div>
 
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-        {pantalla === "competencias" && <BannerInstalar />}
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          {pantalla === "competencias" && <BannerInstalar />}
 
-        {cargando && <div style={{ display: "flex", justifyContent: "center", padding: 32 }}><div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #dcfce7", borderTopColor: "#4ade80", animation: "spin 0.8s linear infinite" }} /></div>}
+          {cargando && <div style={{ display: "flex", justifyContent: "center", padding: 32 }}><div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #dcfce7", borderTopColor: cfg.acento, animation: "spin 0.8s linear infinite" }} /></div>}
 
-        {error && <div style={{ textAlign: "center", padding: 24, color: "#dc2626", fontSize: 13 }}>{error}</div>}
+          {error && <div style={{ textAlign: "center", padding: 24, color: "#dc2626", fontSize: 13 }}>{error}</div>}
 
-        {/* Competencias */}
-        {!cargando && pantalla === "competencias" && (
-          competencias.length === 0
-            ? <div style={{ textAlign: "center", padding: 32, color: "#9ca3af", fontSize: 13 }}>No hay competencias disponibles</div>
-            : competencias.map(comp => (
-                <div key={comp.docId} onClick={() => seleccionarComp(comp)}
-                  style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0, overflow: "hidden" }}>
-                    {comp.logoUrl
-                      ? <img src={comp.logoUrl} alt={comp.nombre} style={{ width: 44, height: 44, objectFit: "cover" }} />
-                      : "🏆"
-                    }
+          {/* Competencias */}
+          {!cargando && pantalla === "competencias" && (
+            competencias.length === 0
+              ? <div style={{ textAlign: "center", padding: 32, color: "#9ca3af", fontSize: 13 }}>No hay competencias disponibles</div>
+              : competencias.map(comp => (
+                  <div key={comp.docId} onClick={() => seleccionarComp(comp)}
+                    style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 12, background: cfg.suave, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0, overflow: "hidden" }}>
+                      {comp.logoUrl
+                        ? <img src={comp.logoUrl} alt={comp.nombre} style={{ width: 44, height: 44, objectFit: "cover" }} />
+                        : "🏆"
+                      }
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{comp.nombre}</div>
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{tempSel?.anio}</div>
+                    </div>
+                    <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{comp.nombre}</div>
-                    <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{tempSel?.anio}</div>
-                  </div>
-                  <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
+                ))
+          )}
+
+          {/* Zonas */}
+          {pantalla === "zonas" && zonas.map(zona => (
+            <div key={zona.docId}
+              onClick={() => { if (!zona.publicado) return; setZonaSel(zona); setPantalla("zona"); }}
+              style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: zona.publicado ? "pointer" : "default", opacity: zona.publicado ? 1 : 0.6 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{zona.nombre}</div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                  {zona.publicado ? compSel?.nombre : "Próximamente"}
                 </div>
-              ))
-        )}
-
-        {/* Zonas */}
-        {pantalla === "zonas" && zonas.map(zona => (
-          <div key={zona.docId}
-            onClick={() => { if (!zona.publicado) return; setZonaSel(zona); setPantalla("zona"); }}
-            style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: zona.publicado ? "pointer" : "default", opacity: zona.publicado ? 1 : 0.6 }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{zona.nombre}</div>
-              <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-                {zona.publicado ? compSel?.nombre : "Próximamente"}
               </div>
+              {zona.publicado
+                ? <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
+                : <span style={{ fontSize: 11, color: "#9ca3af", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20 }}>Próximamente</span>
+              }
             </div>
-            {zona.publicado
-              ? <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
-              : <span style={{ fontSize: 11, color: "#9ca3af", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20 }}>Próximamente</span>
-            }
-          </div>
-        ))}
+          ))}
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
       </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
-    </div>
+    </CfgCtx.Provider>
   );
 }

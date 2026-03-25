@@ -70,6 +70,20 @@ function Spinner() {
   );
 }
 
+// ── Orden de categorías ───────────────────────────────────────────────────────
+const JERARQUIA = ["cuarta", "quinta", "reserva", "primera", "senior"];
+function sortCategorias(cats) {
+  return [...cats].sort((a, b) => {
+    const aN = parseInt(a.nombre), bN = parseInt(b.nombre);
+    const aAnio = !isNaN(aN) && aN > 1000, bAnio = !isNaN(bN) && bN > 1000;
+    if (aAnio && bAnio) return aN - bN;
+    const aJ = JERARQUIA.indexOf(a.nombre.toLowerCase());
+    const bJ = JERARQUIA.indexOf(b.nombre.toLowerCase());
+    if (aJ !== -1 && bJ !== -1) return aJ - bJ;
+    return a.nombre.localeCompare(b.nombre);
+  });
+}
+
 // ── Lógica de tabla ───────────────────────────────────────────────────────────
 function calcularTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
   return clubes.map(club => {
@@ -260,24 +274,53 @@ function PartidoLineal({ partido, clubes, onClick }) {
 }
 
 function TabFixture({ partidos, clubes, onVerPartido }) {
-  const jornadas = [...new Set(partidos.filter(p => !p.esLibre).map(p => p.jornada))].filter(v => v != null).sort((a, b) => a - b);
+  const jornadas = useMemo(() =>
+    [...new Set(partidos.filter(p => !p.esLibre).map(p => p.jornada))]
+      .filter(v => v != null).sort((a, b) => a - b),
+    [partidos]
+  );
+  const [jornadaSel, setJornadaSel] = useState(null);
+
+  useEffect(() => {
+    setJornadaSel(prev => (prev != null && jornadas.includes(prev)) ? prev : (jornadas[0] ?? null));
+  }, [jornadas]);
+
   if (jornadas.length === 0) return <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin partidos cargados</div>;
+
+  const grupo  = partidos.filter(p => p.jornada === jornadaSel && !p.esLibre);
+  const jugados = grupo.filter(p => p.jugado).length;
+  const selectArrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23166534' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {jornadas.map(j => {
-        const grupo = partidos.filter(p => p.jornada === j && !p.esLibre);
-        return (
-          <Card key={j}>
-            <div style={{ padding: "9px 14px", background: "#dcfce7", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>Fecha {j}</span>
-              <span style={{ fontSize: 11, color: "#166534", background: "#bbf7d0", padding: "2px 8px", borderRadius: 20 }}>
-                {grupo.filter(p => p.jugado).length}/{grupo.length} jugados
-              </span>
-            </div>
-            {grupo.map(p => <PartidoLineal key={p.docId} partido={p} clubes={clubes} onClick={onVerPartido} />)}
-          </Card>
-        );
-      })}
+      <select
+        value={jornadaSel ?? ""}
+        onChange={e => setJornadaSel(Number(e.target.value))}
+        style={{
+          width: "100%", background: "#fff", color: "#111827",
+          border: "1.5px solid #dcfce7", borderRadius: 10,
+          padding: "8px 36px 8px 12px", fontSize: 13, fontWeight: 600,
+          cursor: "pointer", outline: "none", appearance: "none",
+          backgroundImage: selectArrow, backgroundRepeat: "no-repeat",
+          backgroundPosition: "right 12px center", boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
+        }}
+      >
+        {jornadas.map(j => {
+          const gr = partidos.filter(p => p.jornada === j && !p.esLibre);
+          return <option key={j} value={j}>Fecha {j} · {gr.filter(p => p.jugado).length}/{gr.length} jugados</option>;
+        })}
+      </select>
+      {jornadaSel != null && (
+        <Card>
+          <div style={{ padding: "9px 14px", background: "#dcfce7", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>Fecha {jornadaSel}</span>
+            <span style={{ fontSize: 11, color: "#166534", background: "#bbf7d0", padding: "2px 8px", borderRadius: 20 }}>
+              {jugados}/{grupo.length} jugados
+            </span>
+          </div>
+          {grupo.map(p => <PartidoLineal key={p.docId} partido={p} clubes={clubes} onClick={onVerPartido} />)}
+        </Card>
+      )}
     </div>
   );
 }
@@ -577,7 +620,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
         getDocs(collection(zonaRef, "clubes")),
         getDocs(collection(zonaRef, "categorias")),
       ]);
-      const catsData = cats.docs.map(d => ({ docId: d.id, ...d.data() }));
+      const catsData = sortCategorias(cats.docs.map(d => ({ docId: d.id, ...d.data() })));
       setClubes(cs.docs.map(d => ({ docId: d.id, ...d.data() })));
       setCategorias(catsData);
       // Tabla General primero si está activa
@@ -624,7 +667,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
   const mostrarGeneral = zona.tablaGeneralActiva && zona.tablaGeneralVisible;
   const opciones = [
     ...(mostrarGeneral ? [{ id: "__general__", label: "Tabla General" }] : []),
-    ...categorias.map(c => ({ id: c.docId, label: c.nombre })),
+    ...sortCategorias(categorias).map(c => ({ id: c.docId, label: c.nombre })),
   ];
   const pV = catSel === "__general__" ? (zona.tablaGeneralPuntosVictoria ?? 3) : (zona.puntosPorVictoria ?? 3);
 

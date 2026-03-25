@@ -629,11 +629,11 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
       const catsData = sortCategorias(cats.docs.map(d => ({ docId: d.id, ...d.data() })));
       setClubes(cs.docs.map(d => ({ docId: d.id, ...d.data() })));
       setCategorias(catsData);
-      // Tabla General primero si está activa
-      if (zona.tablaGeneralActiva && zona.tablaGeneralVisible) {
-        setCatSel("__general__");
-      } else if (catsData.length > 0) {
+      // Categorías primero; Tabla General solo si no hay categorías
+      if (catsData.length > 0) {
         setCatSel(catsData[0].docId);
+      } else if (zona.tablaGeneralActiva && zona.tablaGeneralVisible) {
+        setCatSel("__general__");
       }
     }
     cargar();
@@ -672,9 +672,10 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
 
   const mostrarGeneral = zona.tablaGeneralActiva && zona.tablaGeneralVisible;
   const opciones = [
-    ...(mostrarGeneral ? [{ id: "__general__", label: "Tabla General" }] : []),
     ...sortCategorias(categorias).map(c => ({ id: c.docId, label: c.nombre })),
+    ...(mostrarGeneral ? [{ id: "__general__", label: "Tabla General" }] : []),
   ];
+  const tabsVisibles = catSel === "__general__" ? ["Posiciones"] : TABS;
   const pV = catSel === "__general__" ? (zona.tablaGeneralPuntosVictoria ?? 3) : (zona.puntosPorVictoria ?? 3);
 
   if (partidoSel) return <VistaPartido partido={partidoSel} clubes={clubes} onBack={() => setPartidoSel(null)} />;
@@ -724,7 +725,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
             </div>
           )}
           <div className="tabs-scroll" style={{ display: "flex", gap: 0, overflowX: "auto", msOverflowStyle: "none", scrollbarWidth: "none" }}>
-            {TABS.map(t => (
+            {tabsVisibles.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 padding: "7px 11px", borderRadius: "8px 8px 0 0", border: "none", fontSize: 11,
                 cursor: "pointer", whiteSpace: "nowrap", fontWeight: tab === t ? 700 : 500,
@@ -745,10 +746,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
                 onVerEquipo={catSel !== "__general__" ? setClubSel : undefined}
               />
             )}
-            {tab === "Fixture" && catSel !== "__general__" && <TabFixture partidos={partidos} clubes={clubes} onVerPartido={setPartidoSel} />}
-            {tab === "Fixture" && catSel === "__general__" && (
-              <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>El fixture no está disponible para la Tabla General</div>
-            )}
+            {tab === "Fixture" && <TabFixture partidos={partidos} clubes={clubes} onVerPartido={setPartidoSel} />}
             {tab === "Fair Play"   && <TabFairPlay partidos={partidos} clubes={clubes} />}
             {tab === "Goleadores"  && <TabGoleadores partidos={partidos} clubes={clubes} />}
             {tab === "Vallas"      && <TabVallas partidos={partidos} clubes={clubes} />}

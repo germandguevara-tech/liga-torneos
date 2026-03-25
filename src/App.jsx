@@ -652,14 +652,14 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
           const catIds = zona.tablaGeneralCategorias || [];
           const results = await Promise.all(
             catIds.map(catId =>
-              getDocs(collection(doc(zonaRef, "categorias", catId), "partidos"))
+              getDocs(collection(doc(collection(zonaRef, "categorias"), catId), "partidos"))
                 .then(snap => snap.docs.map(d => ({ docId: d.id, ...d.data() })))
             )
           );
           setPartidos(results.flat());
           setSanciones(zona.tablaGeneralSanciones || []);
         } else {
-          const catRef = doc(zonaRef, "categorias", catSel);
+          const catRef = doc(collection(zonaRef, "categorias"), catSel);
           const [pSnap, catSnap] = await Promise.all([
             getDocs(collection(catRef, "partidos")),
             getDoc(catRef),
@@ -807,37 +807,36 @@ export default function App() {
   const [cargando,     setCargando]     = useState(true);
   const [error,        setError]        = useState("");
 
-  // Carga nombre y configuración de colores desde ligas/{LIGA_ID}
-  useEffect(() => {
-    getDoc(doc(db, "ligas", LIGA_ID)).then(snap => {
-      if (!snap.exists()) return;
-      const d    = snap.data();
-      const conf = d.configuracion || {};
-      setCfg({
-        nombre:  conf.nombre         || d.nombre      || CFG_DEFAULT.nombre,
-        color:   conf.colorPrincipal                  || CFG_DEFAULT.color,
-        acento:  conf.colorAcento                     || CFG_DEFAULT.acento,
-        suave:   conf.colorFondo                      || CFG_DEFAULT.suave,
-        logoUrl: conf.logoUrl        || d.logoUrl     || null,
-      });
-    }).catch(err => console.error("Error cargando configuración:", err));
-  }, []);
-
   useEffect(() => {
     async function cargar() {
       try {
-        // Temporadas de la liga, filtrar visibles, tomar la más reciente
-        const tempsSnap = await getDocs(collection(db, "ligas", LIGA_ID, "temporadas"));
+        // Carga config de la liga y temporadas en paralelo
+        const [ligaSnap, tempsSnap] = await Promise.all([
+          getDoc(doc(db, "ligas", LIGA_ID)),
+          getDocs(collection(db, "ligas", LIGA_ID, "temporadas")),
+        ]);
+
+        if (ligaSnap.exists()) {
+          const d    = ligaSnap.data();
+          const conf = d.configuracion || {};
+          setCfg({
+            nombre:  conf.nombre         || d.nombre  || CFG_DEFAULT.nombre,
+            color:   conf.colorPrincipal              || CFG_DEFAULT.color,
+            acento:  conf.colorAcento                 || CFG_DEFAULT.acento,
+            suave:   conf.colorFondo                  || CFG_DEFAULT.suave,
+            logoUrl: conf.logoUrl        || d.logoUrl || null,
+          });
+        }
+
         const temps = tempsSnap.docs
           .map(d => ({ docId: d.id, ...d.data() }))
           .filter(t => t.visible !== false)
           .sort((a, b) => (b.anio || 0) - (a.anio || 0));
 
-        if (temps.length === 0) { setCargando(false); return; }
+        if (temps.length === 0) return;
         const temp = temps[0];
         setTempSel(temp);
 
-        // Competencias de esa temporada, filtrar visibles
         const compsSnap = await getDocs(
           collection(db, "ligas", LIGA_ID, "temporadas", temp.docId, "competencias")
         );
@@ -845,13 +844,6 @@ export default function App() {
           .map(d => ({ docId: d.id, ...d.data() }))
           .filter(c => c.visible !== false);
         setCompetencias(comps);
-
-        // Auto-navegar si hay una sola competencia
-        if (comps.length === 1) {
-          await cargarZonas(temp, comps[0]);
-          setCompSel(comps[0]);
-          setPantalla("zonas");
-        }
       } catch (e) {
         setError(e.message);
       } finally {
@@ -872,6 +864,18 @@ export default function App() {
     setCompSel(comp);
     await cargarZonas(tempSel, comp);
     setPantalla("zonas");
+  }
+
+  // ── Spinner inicial hasta que Firebase responda ──
+  if (cargando) {
+    return (
+      <>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+          <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid #dcfce7", borderTopColor: "#4ade80", animation: "spin 0.8s linear infinite" }} />
+        </div>
+      </>
+    );
   }
 
   // ── Render zona ──
@@ -919,12 +923,10 @@ export default function App() {
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
           {pantalla === "competencias" && <BannerInstalar />}
 
-          {cargando && <div style={{ display: "flex", justifyContent: "center", padding: 32 }}><div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #dcfce7", borderTopColor: cfg.acento, animation: "spin 0.8s linear infinite" }} /></div>}
-
           {error && <div style={{ textAlign: "center", padding: 24, color: "#dc2626", fontSize: 13 }}>{error}</div>}
 
           {/* Competencias */}
-          {!cargando && pantalla === "competencias" && (
+          {pantalla === "competencias" && (
             competencias.length === 0
               ? <div style={{ textAlign: "center", padding: 32, color: "#9ca3af", fontSize: 13 }}>No hay competencias disponibles</div>
               : competencias.map(comp => (

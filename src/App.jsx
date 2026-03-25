@@ -91,10 +91,67 @@ function calcularTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
   }).sort((a, b) => b.pts - a.pts || b.dg - a.dg || b.gf - a.gf);
 }
 
+// ── Perfil del jugador ────────────────────────────────────────────────────────
+function VistaJugador({ jugador, partidos, onBack }) {
+  const goles = partidos
+    .filter(p => p.jugado && Array.isArray(p.goles))
+    .reduce((acc, p) => acc + p.goles
+      .filter(g => g.nombre === jugador.nombre && g.equipo === jugador.clubId)
+      .reduce((s, g) => s + (g.cantidad || 1), 0), 0);
+
+  const amarillas = partidos
+    .filter(p => p.jugado && Array.isArray(p.tarjetas))
+    .reduce((acc, p) => acc + p.tarjetas
+      .filter(t => t.nombre === jugador.nombre && t.equipo === jugador.clubId && t.tipo === "amarilla").length, 0);
+
+  const rojas = partidos
+    .filter(p => p.jugado && Array.isArray(p.tarjetas))
+    .reduce((acc, p) => acc + p.tarjetas
+      .filter(t => t.nombre === jugador.nombre && t.equipo === jugador.clubId && t.tipo === "roja").length, 0);
+
+  const ini = ((jugador.apellido?.[0] || "") + (jugador.nombre?.[0] || "")).toUpperCase();
+
+  return (
+    <div>
+      <Header onBack={onBack} titulo={`${jugador.apellido}, ${jugador.nombre}`} subtitulo="Perfil del jugador" />
+      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Foto / avatar */}
+        <div style={{ display: "flex", justifyContent: "center", paddingTop: 8 }}>
+          {jugador.fotoUrl
+            ? <img src={jugador.fotoUrl} alt={jugador.nombre} style={{ width: 96, height: 96, borderRadius: "50%", objectFit: "cover", border: "3px solid #4ade80" }} />
+            : <div style={{ width: 96, height: 96, borderRadius: "50%", background: "#dcfce7", border: "3px solid #4ade80", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 32, color: "#1a3a2a" }}>{ini}</div>
+          }
+        </div>
+        {/* Nombre */}
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#111827" }}>{jugador.apellido}, {jugador.nombre}</div>
+        </div>
+        {/* Stats */}
+        <Card>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr" }}>
+            {[
+              { emoji: "⚽", valor: goles,     label: "Goles" },
+              { emoji: "🟡", valor: amarillas, label: "Amarillas" },
+              { emoji: "🔴", valor: rojas,     label: "Rojas" },
+            ].map((s, i) => (
+              <div key={i} style={{ padding: "16px 8px", textAlign: "center", borderLeft: i > 0 ? "1px solid #f0fdf4" : "none" }}>
+                <div style={{ fontSize: 22, marginBottom: 4 }}>{s.emoji}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: "#111827" }}>{s.valor}</div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // ── Vista equipo (plantel público) ────────────────────────────────────────────
-function VistaEquipo({ club, ligaId, catId, onBack }) {
+function VistaEquipo({ club, ligaId, catId, partidos, onBack }) {
   const [jugadores, setJugadores] = useState([]);
   const [cargando, setCargando] = useState(true);
+  const [jugadorSel, setJugadorSel] = useState(null);
 
   useEffect(() => {
     getDocs(query(collection(db, "ligas", ligaId, "jugadores"), where("clubId", "==", club.docId)))
@@ -108,6 +165,10 @@ function VistaEquipo({ club, ligaId, catId, onBack }) {
       .catch(() => setCargando(false));
   }, [club.docId, catId, ligaId]);
 
+  if (jugadorSel) {
+    return <VistaJugador jugador={jugadorSel} partidos={partidos || []} onBack={() => setJugadorSel(null)} />;
+  }
+
   return (
     <div>
       <Header onBack={onBack} titulo={club.nombre} subtitulo="Plantel" />
@@ -117,14 +178,16 @@ function VistaEquipo({ club, ligaId, catId, onBack }) {
         ) : (
           <Card>
             {jugadores.map((j, i) => (
-              <div key={j.docId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none" }}>
+              <div key={j.docId} onClick={() => setJugadorSel(j)}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none", cursor: "pointer" }}>
                 {j.fotoUrl
                   ? <img src={j.fotoUrl} alt={j.nombre} style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1.5px solid #dcfce7" }} />
                   : <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#4ade8035", border: "1.5px solid #4ade8070", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 12, color: "#1a3a2a", flexShrink: 0 }}>
                       {(j.apellido?.[0] || "").toUpperCase()}{(j.nombre?.[0] || "").toUpperCase()}
                     </div>
                 }
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{j.apellido}, {j.nombre}</div>
+                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#111827" }}>{j.apellido}, {j.nombre}</div>
+                <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
               </div>
             ))}
           </Card>
@@ -517,7 +580,12 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
       const catsData = cats.docs.map(d => ({ docId: d.id, ...d.data() }));
       setClubes(cs.docs.map(d => ({ docId: d.id, ...d.data() })));
       setCategorias(catsData);
-      if (catsData.length > 0) setCatSel(catsData[0].docId);
+      // Tabla General primero si está activa
+      if (zona.tablaGeneralActiva && zona.tablaGeneralVisible) {
+        setCatSel("__general__");
+      } else if (catsData.length > 0) {
+        setCatSel(catsData[0].docId);
+      }
     }
     cargar();
   }, []);
@@ -555,8 +623,8 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
 
   const mostrarGeneral = zona.tablaGeneralActiva && zona.tablaGeneralVisible;
   const opciones = [
-    ...categorias.map(c => ({ id: c.docId, label: c.nombre })),
     ...(mostrarGeneral ? [{ id: "__general__", label: "Tabla General" }] : []),
+    ...categorias.map(c => ({ id: c.docId, label: c.nombre })),
   ];
   const pV = catSel === "__general__" ? (zona.tablaGeneralPuntosVictoria ?? 3) : (zona.puntosPorVictoria ?? 3);
 
@@ -568,6 +636,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
         club={clubSel}
         ligaId={liga.docId}
         catId={catSel !== "__general__" ? catSel : null}
+        partidos={partidos}
         onBack={() => setClubSel(null)}
       />
     );
@@ -585,17 +654,24 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
             </div>
           </div>
           {opciones.length > 1 && (
-            <div className="tabs-scroll" style={{ display: "flex", gap: 6, overflowX: "auto", msOverflowStyle: "none", scrollbarWidth: "none", paddingBottom: 8 }}>
-              {opciones.map(o => (
-                <button key={o.id} onClick={() => { setCatSel(o.id); setTab("Posiciones"); }} style={{
-                  padding: "4px 12px", borderRadius: 20, border: "1.5px solid",
-                  borderColor: catSel === o.id ? "#4ade80" : "rgba(255,255,255,0.2)",
-                  background: catSel === o.id ? "#4ade80" : "transparent",
-                  color: catSel === o.id ? "#1a3a2a" : "rgba(255,255,255,0.7)",
-                  fontSize: 12, fontWeight: catSel === o.id ? 700 : 500,
-                  cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                }}>{o.label}</button>
-              ))}
+            <div style={{ paddingBottom: 8 }}>
+              <select
+                value={catSel || ""}
+                onChange={e => { setCatSel(e.target.value); setTab("Posiciones"); }}
+                style={{
+                  width: "100%", background: "rgba(255,255,255,0.12)", color: "#fff",
+                  border: "1.5px solid rgba(255,255,255,0.25)", borderRadius: 10,
+                  padding: "7px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  outline: "none", appearance: "none",
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234ade80' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
+                  paddingRight: 36,
+                }}
+              >
+                {opciones.map(o => (
+                  <option key={o.id} value={o.id} style={{ background: "#1a3a2a", color: "#fff" }}>{o.label}</option>
+                ))}
+              </select>
             </div>
           )}
           <div className="tabs-scroll" style={{ display: "flex", gap: 0, overflowX: "auto", msOverflowStyle: "none", scrollbarWidth: "none" }}>

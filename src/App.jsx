@@ -623,21 +623,34 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
   const [clubSel,   setClubSel]   = useState(null);
 
   const zonaRef = doc(db, "ligas", liga.docId, "temporadas", temporada.docId, "competencias", competencia.docId, "zonas", zona.docId);
+  const compRef = doc(db, "ligas", liga.docId, "temporadas", temporada.docId, "competencias", competencia.docId);
 
   useEffect(() => {
     async function cargar() {
       const [cs, cats] = await Promise.all([
-        getDocs(collection(zonaRef, "clubes")),
-        getDocs(collection(zonaRef, "categorias")),
+        getDocs(collection(compRef, "clubes")),
+        getDocs(collection(compRef, "categorias")),
       ]);
-      const catsData = sortCategorias(cats.docs.map(d => ({ docId: d.id, ...d.data() })));
-      setClubes(cs.docs.map(d => ({ docId: d.id, ...d.data() })));
+      const allClubes = cs.docs.map(d => ({ docId: d.id, ...d.data() }));
+      const partIds   = zona.clubesParticipantes;
+      setClubes(partIds?.length ? allClubes.filter(c => partIds.includes(c.docId)) : allClubes);
+
+      // Filtrar categorías por zona y aplicar visibilidad por zona
+      const allCats   = cats.docs.map(d => ({ docId: d.id, ...d.data() }));
+      const catPart   = zona.categoriasParticipantes;
+      const catVis    = zona.categoriasVisibilidad || {};
+      const catsZona  = catPart?.length ? allCats.filter(c => catPart.includes(c.docId)) : allCats;
+      const catsData  = sortCategorias(
+        catsZona.map(c => ({ ...c, visible: catPart?.length ? (catVis[c.docId] ?? c.visible) : c.visible }))
+      ).filter(c => c.visible);
       setCategorias(catsData);
       // Categorías primero; Tabla General solo si no hay categorías
       if (catsData.length > 0) {
         setCatSel(catsData[0].docId);
       } else if (zona.tablaGeneralActiva && zona.tablaGeneralVisible) {
         setCatSel("__general__");
+      } else if (zona.tablaAcumuladaActiva && zona.tablaAcumuladaVisible) {
+        setCatSel("__acumulada__");
       }
     }
     cargar();
@@ -658,6 +671,21 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
           );
           setPartidos(results.flat());
           setSanciones(zona.tablaGeneralSanciones || []);
+        } else if (catSel === "__acumulada__") {
+          const zonaIds = zona.tablaAcumuladaZonas || [];
+          const results = await Promise.all(
+            zonaIds.flatMap(zId =>
+              categorias.map(cat => {
+                const zRef   = doc(collection(compRef, "zonas"), zId);
+                const catRef = doc(collection(zRef, "categorias"), cat.docId);
+                return getDocs(collection(catRef, "partidos"))
+                  .then(snap => snap.docs.map(d => ({ docId: d.id, ...d.data() })))
+                  .catch(() => []);
+              })
+            )
+          );
+          setPartidos(results.flat());
+          setSanciones(zona.tablaAcumuladaSanciones || []);
         } else {
           const catRef = doc(collection(zonaRef, "categorias"), catSel);
           const [pSnap, catSnap] = await Promise.all([
@@ -674,12 +702,15 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
     cargarPartidos();
   }, [catSel]);
 
-  const mostrarGeneral = zona.tablaGeneralActiva && zona.tablaGeneralVisible;
+  const mostrarGeneral   = zona.tablaGeneralActiva   && zona.tablaGeneralVisible;
+  const mostrarAcumulada = zona.tablaAcumuladaActiva && zona.tablaAcumuladaVisible;
   const opciones = [
     ...sortCategorias(categorias).map(c => ({ id: c.docId, label: c.nombre })),
-    ...(mostrarGeneral ? [{ id: "__general__", label: "Tabla General" }] : []),
+    ...(mostrarGeneral   ? [{ id: "__general__",  label: "Tabla General"   }] : []),
+    ...(mostrarAcumulada ? [{ id: "__acumulada__", label: "Tabla Acumulada" }] : []),
   ];
-  const tabsVisibles = catSel === "__general__" ? ["Posiciones"] : TABS;
+  const esResumen    = catSel === "__general__" || catSel === "__acumulada__";
+  const tabsVisibles = esResumen ? ["Posiciones"] : TABS;
   const pV = catSel === "__general__" ? (zona.tablaGeneralPuntosVictoria ?? 3) : (zona.puntosPorVictoria ?? 3);
 
   if (partidoSel) return <VistaPartido partido={partidoSel} clubes={clubes} onBack={() => setPartidoSel(null)} />;
@@ -689,7 +720,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
       <VistaEquipo
         club={clubSel}
         ligaId={liga.docId}
-        catId={catSel !== "__general__" ? catSel : null}
+        catId={esResumen ? null : catSel}
         partidos={partidos}
         onBack={() => setClubSel(null)}
       />

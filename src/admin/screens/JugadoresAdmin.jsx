@@ -32,9 +32,6 @@ function ModalJugador({ jugador, ligaId, zonas, allClubes, allCats, onGuardar, o
   const [error,       setError]       = useState("");
   const [confirmDel,  setConfirmDel]  = useState(false);
 
-  const clubesZona = allClubes.filter(c => c.zonaId === zonaId);
-  const catsZona   = allCats.filter(c => c.zonaId === zonaId);
-
   useEffect(() => {
     if (!jugador) { setClubId(""); setCatId(""); }
   }, [zonaId]);
@@ -90,13 +87,13 @@ function ModalJugador({ jugador, ligaId, zonas, allClubes, allCats, onGuardar, o
         <Campo label="Club *">
           <SelectAdmin value={clubId} onChange={e => setClubId(e.target.value)}>
             <option value="">— Seleccionar —</option>
-            {clubesZona.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+            {allClubes.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
           </SelectAdmin>
         </Campo>
         <Campo label="Categoría *">
           <SelectAdmin value={catId} onChange={e => setCatId(e.target.value)}>
             <option value="">— Seleccionar —</option>
-            {catsZona.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+            {allCats.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
           </SelectAdmin>
         </Campo>
       </div>
@@ -128,9 +125,6 @@ function ModalExcel({ zonas, allClubes, allCats, onImportar, onClose }) {
   const [filas,      setFilas]      = useState(null);
   const [importando, setImportando] = useState(false);
   const [error,      setError]      = useState("");
-
-  const clubesZona = allClubes.filter(c => c.zonaId === zonaId);
-  const catsZona   = allCats.filter(c => c.zonaId === zonaId);
 
   function norm(s) {
     return String(s || "").trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
@@ -184,8 +178,8 @@ function ModalExcel({ zonas, allClubes, allCats, onImportar, onClose }) {
         const fechaNac  = parsearFecha(get("Fecha de nacimiento", "FechaNacimiento", "Fecha"));
         const clubNom   = norm(get("Club"));
         const catNom    = norm(get("Categoria", "Categoría"));
-        const club = clubesZona.find(c => norm(c.nombre) === clubNom);
-        const cat  = catsZona.find(c => norm(c.nombre) === catNom);
+        const club = allClubes.find(c => norm(c.nombre) === clubNom);
+        const cat  = allCats.find(c => norm(c.nombre) === catNom);
         return {
           apellido, nombre, dni, fechaNacimiento: fechaNac,
           clubNomOrig: String(get("Club") || "").trim(),
@@ -282,23 +276,15 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
 
   async function cargarTodo() {
     setCargando(true);
-    const zonasSnap = await getDocs(collection(compRef, "zonas"));
-    const zonasData = zonasSnap.docs.map(d => ({ docId: d.id, ...d.data() }));
-    setZonas(zonasData);
-
-    const clubesArr = [], catsArr = [];
-    await Promise.all(zonasData.map(async zona => {
-      const [cs, cats] = await Promise.all([
-        getDocs(collection(doc(compRef, "zonas", zona.docId), "clubes")),
-        getDocs(collection(doc(compRef, "zonas", zona.docId), "categorias")),
-      ]);
-      cs.docs.forEach(d => clubesArr.push({ docId: d.id, ...d.data(), zonaId: zona.docId, zonaNombre: zona.nombre }));
-      cats.docs.forEach(d => catsArr.push({ docId: d.id, ...d.data(), zonaId: zona.docId, zonaNombre: zona.nombre }));
-    }));
-    setAllClubes(clubesArr);
-    setAllCats(catsArr);
-
-    const jugSnap = await getDocs(query(collection(ligaRef, "jugadores"), where("competenciaId", "==", competencia.docId)));
+    const [zonasSnap, clubesSnap, catsSnap, jugSnap] = await Promise.all([
+      getDocs(collection(compRef, "zonas")),
+      getDocs(collection(compRef, "clubes")),
+      getDocs(collection(compRef, "categorias")),
+      getDocs(query(collection(ligaRef, "jugadores"), where("competenciaId", "==", competencia.docId))),
+    ]);
+    setZonas(zonasSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
+    setAllClubes(clubesSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
+    setAllCats(catsSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
     setJugadores(jugSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
     setCargando(false);
   }
@@ -379,8 +365,8 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
     setModalExcel(false);
   }
 
-  const catsParaFiltro  = filtroZona ? allCats.filter(c => c.zonaId === filtroZona)   : allCats;
-  const clubesParaFiltro = filtroZona ? allClubes.filter(c => c.zonaId === filtroZona) : allClubes;
+  const catsParaFiltro   = allCats;
+  const clubesParaFiltro = allClubes;
 
   return (
     <div style={{ minHeight: "100vh", background: "#f0fdf4", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
@@ -417,11 +403,11 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
                   </SelectAdmin>
                   <SelectAdmin value={filtroCat} onChange={e => setFiltroCat(e.target.value)} style={{ flex: 1, minWidth: 100 }}>
                     <option value="">Todas las cats.</option>
-                    {catsParaFiltro.map(c => <option key={c.docId} value={c.docId}>{c.nombre}{!filtroZona ? ` (${c.zonaNombre})` : ""}</option>)}
+                    {catsParaFiltro.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
                   </SelectAdmin>
                   <SelectAdmin value={filtroClub} onChange={e => setFiltroClub(e.target.value)} style={{ flex: 1, minWidth: 100 }}>
                     <option value="">Todos los clubes</option>
-                    {clubesParaFiltro.map(c => <option key={c.docId} value={c.docId}>{c.nombre}{!filtroZona ? ` (${c.zonaNombre})` : ""}</option>)}
+                    {clubesParaFiltro.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
                   </SelectAdmin>
                 </div>
                 <SeccionLabel>{jugFiltrados.length} jugador{jugFiltrados.length !== 1 ? "es" : ""}</SeccionLabel>

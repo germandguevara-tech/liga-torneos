@@ -24,28 +24,13 @@ function calcRondas(slots) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function FixtureAdmin({ zonaRef, zona, ligaId }) {
-  const [publicado,  setPublicado]  = useState(zona.publicado ?? false);
-  const [clubes,     setClubes]     = useState([]);
-  const [categorias, setCategorias] = useState([]);
-  const [cargando,   setCargando]   = useState(true);
+export default function FixtureAdmin({ zonaRef, zona, ligaId, clubes, categorias }) {
+  const [publicado, setPublicado] = useState(zona.publicado ?? false);
+  const sortedClubes = [...clubes].sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const sortedCats   = [...categorias].sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999));
 
-  useEffect(() => {
-    (async () => {
-      const [cs, cats] = await Promise.all([
-        getDocs(collection(zonaRef, "clubes")),
-        getDocs(collection(zonaRef, "categorias")),
-      ]);
-      setClubes(cs.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.nombre.localeCompare(b.nombre)));
-      setCategorias(cats.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999)));
-      setCargando(false);
-    })();
-  }, []);
-
-  if (cargando) return <Spinner />;
-
-  if (publicado) return <PostPublicacion zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} ligaId={ligaId} />;
-  return <PrePublicacion zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} onPublicado={() => setPublicado(true)} />;
+  if (publicado) return <PostPublicacion zonaRef={zonaRef} zona={zona} clubes={sortedClubes} categorias={sortedCats} ligaId={ligaId} onEditarFixture={() => setPublicado(false)} />;
+  return <PrePublicacion zonaRef={zonaRef} zona={zona} clubes={sortedClubes} categorias={sortedCats} onPublicado={() => setPublicado(true)} />;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -141,7 +126,7 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
       <SeccionLabel>Asignación de equipos</SeccionLabel>
 
       {N < 2 ? (
-        <Aviso>Agregá al menos 2 clubes en la pestaña "Clubes".</Aviso>
+        <Aviso>Agregá clubes a la competencia y asigná participantes en la pestaña "Participantes".</Aviso>
       ) : (
         <Card>
           <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -246,7 +231,7 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
 
       {error && <Aviso tipo="error">{error}</Aviso>}
       {categorias.length === 0 && (
-        <Aviso>Agregá al menos una categoría en la pestaña "Categorías" antes de publicar.</Aviso>
+        <Aviso>Agregá al menos una categoría en la competencia antes de publicar.</Aviso>
       )}
       {todosAsignados && hayPareja && totalReales > 0 && categorias.length > 0 && (
         <button
@@ -263,16 +248,54 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // POST-PUBLICACIÓN
 // ══════════════════════════════════════════════════════════════════════════════
-function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId }) {
-  const [catSelId,   setCatSelId]   = useState(categorias[0]?.docId || "");
-  const [partidos,   setPartidos]   = useState([]);
-  const [cargando,   setCargando]   = useState(false);
-  const [jornadaSel, setJornadaSel] = useState(1);
-  const [modalGoles, setModalGoles] = useState(null);
+function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId, onEditarFixture }) {
+  const [catSelId,     setCatSelId]     = useState(categorias[0]?.docId || "");
+  const [partidos,     setPartidos]     = useState([]);
+  const [cargando,     setCargando]     = useState(false);
+  const [jornadaSel,   setJornadaSel]   = useState(1);
+  const [modalGoles,   setModalGoles]   = useState(null);
+  const [hayResultados, setHayResultados] = useState(null); // null=verificando
+  const [modalConfEdit, setModalConfEdit] = useState(false);
+  const [editando,     setEditando]     = useState(false);
+
+  useEffect(() => {
+    verificarResultados();
+  }, []);
 
   useEffect(() => {
     if (catSelId) { setJornadaSel(1); cargarPartidos(catSelId); }
   }, [catSelId]);
+
+  async function verificarResultados() {
+    try {
+      for (const cat of categorias) {
+        const snap = await getDocs(collection(doc(collection(zonaRef, "categorias"), cat.docId), "partidos"));
+        if (snap.docs.some(d => d.data().jugado === true)) {
+          setHayResultados(true);
+          return;
+        }
+      }
+      setHayResultados(false);
+    } catch { setHayResultados(false); }
+  }
+
+  async function confirmarEditarFixture() {
+    setEditando(true);
+    try {
+      for (const cat of categorias) {
+        const catRef = doc(collection(zonaRef, "categorias"), cat.docId);
+        const snap   = await getDocs(collection(catRef, "partidos"));
+        for (let i = 0; i < snap.docs.length; i += 400) {
+          const batch = writeBatch(db);
+          snap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+      await updateDoc(zonaRef, { publicado: false, fixtureBase: [] });
+      onEditarFixture();
+    } catch (e) { console.error("Error borrando fixture:", e); }
+    finally { setEditando(false); setModalConfEdit(false); }
+  }
 
   async function cargarPartidos(catId) {
     setCargando(true);
@@ -296,6 +319,21 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId }) {
 
   return (
     <>
+      {/* Editar fixture */}
+      {hayResultados === false && (
+        <button
+          onClick={() => setModalConfEdit(true)}
+          style={{ background: "#fff7ed", color: "#c2410c", border: "1.5px solid #fed7aa", borderRadius: 12, padding: "11px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, width: "100%", marginBottom: 4 }}
+        >
+          ✏️ Editar fixture
+        </button>
+      )}
+      {hayResultados === true && (
+        <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 12, padding: "11px 16px", fontSize: 13, color: "#991b1b", fontWeight: 600, marginBottom: 4 }}>
+          ⚠️ No se puede editar el fixture porque ya hay resultados cargados.
+        </div>
+      )}
+
       {/* Selector de categoría */}
       {categorias.length > 1 && (
         <Campo label="Categoría">
@@ -351,6 +389,29 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId }) {
           onGuardar={async d => { await guardarResultado(modalGoles, d); setModalGoles(null); }}
           onClose={() => setModalGoles(null)}
         />
+      )}
+
+      {modalConfEdit && (
+        <Modal titulo="¿Editar fixture?" onClose={() => setModalConfEdit(false)}>
+          <div style={{ fontSize: 14, color: "#374151", marginBottom: 16 }}>
+            Se borrarán todos los partidos generados y podrás configurar el fixture nuevamente. Esta acción no se puede deshacer.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => setModalConfEdit(false)}
+              style={{ flex: 1, background: "#f3f4f6", color: "#374151", border: "none", borderRadius: 10, padding: "11px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={confirmarEditarFixture}
+              disabled={editando}
+              style={{ flex: 1, background: editando ? "#9ca3af" : "#c2410c", color: "#fff", border: "none", borderRadius: 10, padding: "11px", cursor: editando ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700 }}
+            >
+              {editando ? "Borrando..." : "Sí, editar fixture"}
+            </button>
+          </div>
+        </Modal>
       )}
     </>
   );

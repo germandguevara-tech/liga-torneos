@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, setDoc, query, where } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../../firebase";
+import { collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, query, where } from "firebase/firestore";
+import { db } from "../../firebase";
 import { HeaderAdmin, Card, Modal, ConfirmModal, Switch, BtnPrimary, Campo, InputAdmin, SelectAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
 import FixtureAdmin from "./FixtureAdmin";
 
@@ -21,8 +20,8 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
   const tempRef   = doc(collection(ligaRef, "temporadas"), temporada.docId);
   const compRef   = doc(collection(tempRef, "competencias"), competencia.docId);
   const zonaRef   = doc(collection(compRef, "zonas"), zona.docId);
-  const clubesCol = collection(zonaRef, "clubes");
-  const catsCol   = collection(zonaRef, "categorias");
+  const clubesCol = collection(compRef, "clubes");
+  const catsCol   = collection(compRef, "categorias");
 
   // ── Config ────────────────────────────────────────────────────────────────
   const [config, setConfig] = useState({
@@ -38,21 +37,18 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
   const [guardandoConfig, setGuardandoConfig] = useState(false);
 
   // ── Clubes ────────────────────────────────────────────────────────────────
-  const [clubes,        setClubes]        = useState([]);
+  const [clubes,         setClubes]         = useState([]);
   const [cargandoClubes, setCargandoClubes] = useState(false);
-  const [modalClub,     setModalClub]     = useState(false);
-  const [nuevoClub,     setNuevoClub]     = useState("");
-  const [logoFile,      setLogoFile]      = useState(null);
-  const [logoPreview,   setLogoPreview]   = useState(null);
-  const [subiendoLogo,  setSubiendoLogo]  = useState(false);
-  const [pendingDelClub, setPendingDelClub] = useState(null);
+
+  // ── Participantes ─────────────────────────────────────────────────────────
+  const [participantesIds,       setParticipantesIds]       = useState(zona.clubesParticipantes     || []);
+  const [catParticipantes,       setCatParticipantes]       = useState(zona.categoriasParticipantes  || []);
+  const [catVisibilidad,         setCatVisibilidad]         = useState(zona.categoriasVisibilidad    || {});
+  const [guardandoParticipantes, setGuardandoParticipantes] = useState(false);
 
   // ── Categorías ────────────────────────────────────────────────────────────
-  const [categorias,    setCategorias]    = useState([]);
-  const [cargandoCats,  setCargandoCats]  = useState(true);
-  const [modalCat,      setModalCat]      = useState(false);
-  const [nuevaCat,      setNuevaCat]      = useState("");
-  const [pendingDelCat, setPendingDelCat] = useState(null);
+  const [categorias,   setCategorias]   = useState([]);
+  const [cargandoCats, setCargandoCats] = useState(true);
 
   // ── Tabla General config ───────────────────────────────────────────────────
   const [tablaConf, setTablaConf] = useState({
@@ -63,14 +59,28 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
     tablaGeneralSanciones:      zona.tablaGeneralSanciones      || [],
   });
 
+  // ── Tabla Acumulada config ─────────────────────────────────────────────────
+  const [tablaAcumConf, setTablaAcumConf] = useState({
+    tablaAcumuladaActiva:     zona.tablaAcumuladaActiva     ?? false,
+    tablaAcumuladaVisible:    zona.tablaAcumuladaVisible    ?? false,
+    tablaAcumuladaZonas:      zona.tablaAcumuladaZonas      || [],
+    tablaAcumuladaSanciones:  zona.tablaAcumuladaSanciones  || [],
+  });
+
+  // ── Todas las zonas de la competencia (para selector acumulada) ────────────
+  const [todasZonas, setTodasZonas] = useState([]);
+
   // ── Loaders ───────────────────────────────────────────────────────────────
   useEffect(() => {
     cargarCategorias();
     if (zona.tipoParticipantes === "clubes") cargarClubes();
+    getDocs(collection(compRef, "zonas"))
+      .then(snap => setTodasZonas(snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => (a.orden ?? a.creadoEn ?? 0) - (b.orden ?? b.creadoEn ?? 0))))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (tab === "clubes" && config.tipoParticipantes === "clubes" && clubes.length === 0) cargarClubes();
+    if (tab === "participantes" && config.tipoParticipantes === "clubes" && clubes.length === 0) cargarClubes();
   }, [tab]);
 
   async function cargarClubes() {
@@ -102,51 +112,18 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
   // ── Actions ───────────────────────────────────────────────────────────────
   async function guardarConfig() {
     setGuardandoConfig(true);
-    await updateDoc(zonaRef, { ...config, ...tablaConf });
+    await updateDoc(zonaRef, { ...config, ...tablaConf, ...tablaAcumConf });
     setGuardandoConfig(false);
   }
 
-  async function agregarClub() {
-    if (!nuevoClub.trim()) return;
-    setSubiendoLogo(true);
-    try {
-      const newRef = doc(clubesCol);
-      let logoUrl = null;
-      if (logoFile) {
-        const storageRef = ref(storage, `logos/${liga.docId}/${newRef.id}`);
-        await uploadBytes(storageRef, logoFile);
-        logoUrl = await getDownloadURL(storageRef);
-      }
-      await setDoc(newRef, { nombre: nuevoClub.trim(), ...(logoUrl ? { logoUrl } : {}), creadoEn: Date.now() });
-    } finally {
-      setSubiendoLogo(false);
-    }
-    setNuevoClub(""); setLogoFile(null); setLogoPreview(null); setModalClub(false);
-    await cargarClubes();
-  }
-
-  async function eliminarClub() {
-    await deleteDoc(doc(clubesCol, pendingDelClub.docId));
-    setPendingDelClub(null);
-    await cargarClubes();
-  }
-
-  async function agregarCategoria() {
-    if (!nuevaCat.trim()) return;
-    await addDoc(catsCol, { nombre: nuevaCat.trim(), visible: true, orden: categorias.length, creadaEn: Date.now() });
-    setNuevaCat(""); setModalCat(false);
-    await cargarCategorias();
-  }
-
-  async function toggleVisibleCat(cat) {
-    await updateDoc(doc(catsCol, cat.docId), { visible: !cat.visible });
-    setCategorias(cs => cs.map(c => c.docId === cat.docId ? { ...c, visible: !c.visible } : c));
-  }
-
-  async function eliminarCategoria() {
-    await deleteDoc(doc(catsCol, pendingDelCat.docId));
-    setPendingDelCat(null);
-    await cargarCategorias();
+  async function guardarParticipantes() {
+    setGuardandoParticipantes(true);
+    await updateDoc(zonaRef, {
+      clubesParticipantes:    participantesIds,
+      categoriasParticipantes: catParticipantes,
+      categoriasVisibilidad:  catVisibilidad,
+    });
+    setGuardandoParticipantes(false);
   }
 
   function moverCriterio(idx, dir) {
@@ -158,13 +135,20 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
   }
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
+  const clubesZona = participantesIds.length
+    ? clubes.filter(c => participantesIds.includes(c.docId))
+    : clubes;
+
+  // Categorías de esta zona (filtradas + visibilidad por zona aplicada)
+  const categoriasZona = (catParticipantes.length ? categorias.filter(c => catParticipantes.includes(c.docId)) : categorias)
+    .map(c => ({ ...c, visible: catParticipantes.length ? (catVisibilidad[c.docId] ?? c.visible) : c.visible }));
+
   const TABS = [
-    { id: "config",     label: "Config"     },
-    ...(config.tipoParticipantes === "clubes" ? [{ id: "clubes", label: "Clubes" }] : []),
-    { id: "categorias", label: "Categorías" },
-    { id: "fixture",    label: "Fixture"    },
-    { id: "tablas",     label: "Tablas"     },
-    { id: "sanciones",  label: "Sanciones"  },
+    { id: "config",        label: "Config"        },
+    ...(config.tipoParticipantes === "clubes" ? [{ id: "participantes", label: "Participantes" }] : []),
+    { id: "fixture",       label: "Fixture"       },
+    { id: "tablas",        label: "Tablas"        },
+    { id: "sanciones",     label: "Sanciones"     },
   ];
 
   return (
@@ -192,100 +176,45 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
           <TabConfig
             config={config} setConfig={setConfig}
             tablaConf={tablaConf} setTablaConf={setTablaConf}
+            tablaAcumConf={tablaAcumConf} setTablaAcumConf={setTablaAcumConf}
+            zonas={todasZonas} zonaId={zona.docId}
             categorias={categorias}
             guardar={guardarConfig} guardando={guardandoConfig}
             moverCriterio={moverCriterio}
           />
         )}
-        {tab === "clubes" && (
-          <TabClubes clubes={clubes} cargando={cargandoClubes} onAgregar={() => setModalClub(true)} onEliminar={setPendingDelClub} />
-        )}
-        {tab === "categorias" && (
-          <TabCategorias categorias={categorias} cargando={cargandoCats} onAgregar={() => setModalCat(true)} onEliminar={setPendingDelCat} onToggleVisible={toggleVisibleCat} />
+        {tab === "participantes" && (
+          <TabParticipantes
+            clubes={clubes} categorias={categorias} cargando={cargandoClubes || cargandoCats}
+            participantesIds={participantesIds} setParticipantesIds={setParticipantesIds}
+            catParticipantes={catParticipantes} setCatParticipantes={setCatParticipantes}
+            catVisibilidad={catVisibilidad} setCatVisibilidad={setCatVisibilidad}
+            guardando={guardandoParticipantes} onGuardar={guardarParticipantes}
+            publicado={zona.publicado ?? false}
+          />
         )}
         {tab === "fixture" && (
-          <FixtureAdmin zonaRef={zonaRef} zona={zona} ligaId={liga.docId} />
+          <FixtureAdmin zonaRef={zonaRef} zona={zona} ligaId={liga.docId} clubes={clubesZona} categorias={categoriasZona} />
         )}
         {tab === "tablas" && (
           <TabTablas
             zonaRef={zonaRef} zona={zona}
-            clubes={clubes} categorias={categorias}
+            clubes={clubesZona} categorias={categoriasZona}
             tablaConf={tablaConf} setTablaConf={setTablaConf}
+            tablaAcumConf={tablaAcumConf} setTablaAcumConf={setTablaAcumConf}
+            compRef={compRef}
           />
         )}
         {tab === "sanciones" && (
           <TabSanciones
             zonaRef={zonaRef}
             ligaId={liga.docId}
-            clubes={clubes}
-            categorias={categorias}
+            clubes={clubesZona}
+            categorias={categoriasZona}
           />
         )}
       </div>
 
-      {/* Modales */}
-      {modalClub && (
-        <Modal titulo="Agregar Club" onClose={() => { setModalClub(false); setNuevoClub(""); setLogoFile(null); setLogoPreview(null); }}>
-          <Campo label="Nombre del club">
-            <InputAdmin placeholder="Club Atlético..." value={nuevoClub} onChange={e => setNuevoClub(e.target.value)} autoFocus onKeyDown={e => !logoFile && e.key === "Enter" && agregarClub()} />
-          </Campo>
-          <Campo label="Logo (opcional)">
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <label style={{ cursor: "pointer", flexShrink: 0 }}>
-                {logoPreview ? (
-                  <img src={logoPreview} alt="preview"
-                    style={{ width: 60, height: 60, borderRadius: "50%", objectFit: "cover", border: "2px solid #4ade80", display: "block" }} />
-                ) : (
-                  <div style={{ width: 60, height: 60, borderRadius: "50%", background: "#f0fdf4", border: "2px dashed #86efac", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>📷</div>
-                )}
-                <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => {
-                  const file = e.target.files[0];
-                  if (!file) return;
-                  setLogoFile(file);
-                  setLogoPreview(URL.createObjectURL(file));
-                }} />
-              </label>
-              <div style={{ flex: 1 }}>
-                {logoFile ? (
-                  <>
-                    <div style={{ fontSize: 12, color: "#166534", fontWeight: 600 }}>✓ {logoFile.name}</div>
-                    <button onClick={() => { setLogoFile(null); setLogoPreview(null); }}
-                      style={{ marginTop: 4, background: "none", border: "none", color: "#dc2626", fontSize: 12, cursor: "pointer", padding: 0 }}>
-                      Quitar imagen
-                    </button>
-                  </>
-                ) : (
-                  <label style={{ cursor: "pointer" }}>
-                    <div style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>Elegir imagen</div>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>JPG, PNG o WebP · Toca para seleccionar</div>
-                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => {
-                      const file = e.target.files[0];
-                      if (!file) return;
-                      setLogoFile(file);
-                      setLogoPreview(URL.createObjectURL(file));
-                    }} />
-                  </label>
-                )}
-              </div>
-            </div>
-          </Campo>
-          <BtnPrimary onClick={agregarClub} disabled={subiendoLogo} fullWidth>
-            {subiendoLogo ? "Subiendo..." : "Agregar"}
-          </BtnPrimary>
-        </Modal>
-      )}
-
-      {modalCat && (
-        <Modal titulo="Agregar Categoría" onClose={() => { setModalCat(false); setNuevaCat(""); }}>
-          <Campo label="Nombre de la categoría">
-            <InputAdmin placeholder="Sub 13, Primera División..." value={nuevaCat} onChange={e => setNuevaCat(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && agregarCategoria()} />
-          </Campo>
-          <BtnPrimary onClick={agregarCategoria} fullWidth>Agregar</BtnPrimary>
-        </Modal>
-      )}
-
-      {pendingDelClub && <ConfirmModal mensaje={`Eliminás el club "${pendingDelClub.nombre}".`}     onConfirmar={eliminarClub}      onCancelar={() => setPendingDelClub(null)} />}
-      {pendingDelCat  && <ConfirmModal mensaje={`Eliminás la categoría "${pendingDelCat.nombre}".`} onConfirmar={eliminarCategoria} onCancelar={() => setPendingDelCat(null)}  />}
     </div>
   );
 }
@@ -293,7 +222,7 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB CONFIG
 // ══════════════════════════════════════════════════════════════════════════════
-function TabConfig({ config, setConfig, tablaConf, setTablaConf, categorias, guardar, guardando, moverCriterio }) {
+function TabConfig({ config, setConfig, tablaConf, setTablaConf, tablaAcumConf, setTablaAcumConf, zonas, zonaId, categorias, guardar, guardando, moverCriterio }) {
   const catsSelIds = tablaConf.tablaGeneralCategorias || [];
   return (
     <>
@@ -312,10 +241,6 @@ function TabConfig({ config, setConfig, tablaConf, setTablaConf, categorias, gua
               <option value="equipos">Equipos independientes</option>
             </SelectAdmin>
           </Campo>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Switch value={config.idaYVuelta} onChange={v => setConfig(c => ({ ...c, idaYVuelta: v }))} />
-            <span style={{ fontSize: 13, color: "#374151" }}>Ida y vuelta</span>
-          </div>
         </div>
       </Card>
 
@@ -414,6 +339,46 @@ function TabConfig({ config, setConfig, tablaConf, setTablaConf, categorias, gua
         </>
       )}
 
+      <SeccionLabel>Tabla acumulada entre zonas</SeccionLabel>
+      <Card>
+        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Switch value={tablaAcumConf.tablaAcumuladaActiva} onChange={v => setTablaAcumConf(c => ({ ...c, tablaAcumuladaActiva: v }))} />
+            <span style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>Tabla acumulada activa</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Switch value={tablaAcumConf.tablaAcumuladaVisible} onChange={v => setTablaAcumConf(c => ({ ...c, tablaAcumuladaVisible: v }))} />
+            <span style={{ fontSize: 13, color: "#374151" }}>Visible al público</span>
+          </div>
+        </div>
+      </Card>
+
+      {tablaAcumConf.tablaAcumuladaActiva && zonas.length > 0 && (
+        <>
+          <SeccionLabel>Zonas que suman a la tabla acumulada</SeccionLabel>
+          <Card>
+            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+              {zonas.map(z => {
+                const checked = (tablaAcumConf.tablaAcumuladaZonas || []).includes(z.docId);
+                return (
+                  <div key={z.docId} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Switch value={checked} onChange={() => setTablaAcumConf(c => ({
+                      ...c,
+                      tablaAcumuladaZonas: checked
+                        ? (c.tablaAcumuladaZonas || []).filter(id => id !== z.docId)
+                        : [...(c.tablaAcumuladaZonas || []), z.docId],
+                    }))} />
+                    <span style={{ fontSize: 13, color: "#374151" }}>
+                      {z.nombre}{z.docId === zonaId ? <span style={{ fontSize: 11, color: "#9ca3af" }}> (esta zona)</span> : ""}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </>
+      )}
+
       <BtnPrimary onClick={guardar} disabled={guardando} fullWidth>
         {guardando ? "Guardando..." : "Guardar configuración"}
       </BtnPrimary>
@@ -422,50 +387,177 @@ function TabConfig({ config, setConfig, tablaConf, setTablaConf, categorias, gua
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB CLUBES
+// TAB PARTICIPANTES
 // ══════════════════════════════════════════════════════════════════════════════
-function TabClubes({ clubes, cargando, onAgregar, onEliminar }) {
-  return (
-    <>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <BtnAccion onClick={onAgregar}>+ Club</BtnAccion>
-      </div>
-      {cargando ? <Spinner /> : clubes.length === 0 ? (
-        <EmptyState emoji="🏟" titulo="Sin clubes" descripcion="Agregá los clubes participantes" />
-      ) : clubes.map(club => (
-        <Card key={club.docId}>
-          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-            <LogoClub club={club} size={40} />
-            <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
-            <BtnDel onClick={() => onEliminar(club)} />
-          </div>
-        </Card>
-      ))}
-    </>
-  );
-}
+function TabParticipantes({ clubes, categorias, cargando, participantesIds, setParticipantesIds, catParticipantes, setCatParticipantes, catVisibilidad, setCatVisibilidad, guardando, onGuardar, publicado }) {
+  const [clubSel, setClubSel] = useState("");
+  const [catSel,  setCatSel]  = useState("");
 
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB CATEGORÍAS
-// ══════════════════════════════════════════════════════════════════════════════
-function TabCategorias({ categorias, cargando, onAgregar, onEliminar, onToggleVisible }) {
+  if (cargando) return <Spinner />;
+
+  if (publicado) {
+    const clubesMostrar = participantesIds.length
+      ? participantesIds.map(id => clubes.find(c => c.docId === id)).filter(Boolean)
+      : clubes;
+    const catsMostrar = catParticipantes.length
+      ? catParticipantes.map(id => categorias.find(c => c.docId === id)).filter(Boolean)
+      : categorias;
+    return (
+      <>
+        <div style={{ background: "#fef3c7", border: "1.5px solid #fcd34d", borderRadius: 12, padding: "11px 16px", fontSize: 13, color: "#92400e", fontWeight: 600 }}>
+          🔒 Torneo publicado — los participantes no se pueden modificar.
+        </div>
+        <SeccionLabel>Clubes participantes</SeccionLabel>
+        {clubesMostrar.map(club => (
+          <Card key={club.docId}>
+            <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+              <LogoClub club={club} size={34} />
+              <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
+            </div>
+          </Card>
+        ))}
+        <SeccionLabel>Categorías participantes</SeccionLabel>
+        {catsMostrar.map(cat => {
+          const visible = catVisibilidad[cat.docId] ?? cat.visible;
+          return (
+            <Card key={cat.docId}>
+              <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
+                <span style={{ fontSize: 11, color: visible ? "#166534" : "#6b7280" }}>{visible ? "Visible" : "Oculta"}</span>
+              </div>
+            </Card>
+          );
+        })}
+      </>
+    );
+  }
+
+  const clubesDisponibles = clubes.filter(c => !participantesIds.includes(c.docId));
+  const clubesAgregados   = participantesIds.map(id => clubes.find(c => c.docId === id)).filter(Boolean);
+  const catsDisponibles   = categorias.filter(c => !catParticipantes.includes(c.docId));
+  const catsAgregadas     = catParticipantes.map(id => categorias.find(c => c.docId === id)).filter(Boolean);
+
+  function agregarClub() {
+    if (!clubSel) return;
+    setParticipantesIds(prev => [...prev, clubSel]);
+    setClubSel("");
+  }
+
+  function quitarClub(id) {
+    setParticipantesIds(prev => prev.filter(x => x !== id));
+  }
+
+  function agregarCat() {
+    if (!catSel) return;
+    setCatParticipantes(prev => [...prev, catSel]);
+    setCatSel("");
+  }
+
+  function quitarCat(id) {
+    setCatParticipantes(prev => prev.filter(x => x !== id));
+    setCatVisibilidad(prev => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  function toggleVisibleCat(catId, currentVisible) {
+    setCatVisibilidad(prev => ({ ...prev, [catId]: !currentVisible }));
+  }
+
+  const nClubes = participantesIds.length || clubes.length;
+  const nCats   = catParticipantes.length  || categorias.length;
+
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <BtnAccion onClick={onAgregar}>+ Categoría</BtnAccion>
-      </div>
-      {cargando ? <Spinner /> : categorias.length === 0 ? (
-        <EmptyState emoji="📋" titulo="Sin categorías" descripcion="Agregá las categorías del torneo" />
-      ) : categorias.map(cat => (
-        <Card key={cat.docId}>
-          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
-            <span style={{ fontSize: 11, color: cat.visible ? "#166534" : "#6b7280" }}>{cat.visible ? "Visible" : "Oculta"}</span>
-            <Switch value={cat.visible} onChange={() => onToggleVisible(cat)} />
-            <BtnDel onClick={() => onEliminar(cat)} />
-          </div>
-        </Card>
-      ))}
+      {/* ── Clubes ── */}
+      <SeccionLabel>Clubes que participan en esta zona</SeccionLabel>
+      {clubes.length === 0 ? (
+        <EmptyState emoji="🏟" titulo="Sin clubes" descripcion="Agregá clubes en la competencia primero" />
+      ) : (
+        <>
+          <Card>
+            <div style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
+              <select
+                value={clubSel}
+                onChange={e => setClubSel(e.target.value)}
+                style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 10, padding: "9px 10px", fontSize: 13, color: clubSel ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}
+              >
+                <option value="">— Seleccioná un club —</option>
+                {clubesDisponibles.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+              </select>
+              <button
+                onClick={agregarClub}
+                disabled={!clubSel}
+                style={{ background: clubSel ? "#1a3a2a" : "#d1fae5", color: clubSel ? "#4ade80" : "#9ca3af", border: "none", borderRadius: 10, padding: "9px 16px", cursor: clubSel ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 700, flexShrink: 0 }}
+              >
+                Agregar
+              </button>
+            </div>
+          </Card>
+          {clubesAgregados.length === 0 && (
+            <div style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", padding: "6px 0" }}>
+              Sin restricción — todos los clubes de la competencia participan
+            </div>
+          )}
+          {clubesAgregados.map(club => (
+            <Card key={club.docId}>
+              <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <LogoClub club={club} size={34} />
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
+                <button onClick={() => quitarClub(club.docId)} style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
+              </div>
+            </Card>
+          ))}
+        </>
+      )}
+
+      {/* ── Categorías ── */}
+      <SeccionLabel>Categorías que participan en esta zona</SeccionLabel>
+      {categorias.length === 0 ? (
+        <EmptyState emoji="📋" titulo="Sin categorías" descripcion="Agregá categorías en la competencia primero" />
+      ) : (
+        <>
+          <Card>
+            <div style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
+              <select
+                value={catSel}
+                onChange={e => setCatSel(e.target.value)}
+                style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 10, padding: "9px 10px", fontSize: 13, color: catSel ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}
+              >
+                <option value="">— Seleccioná una categoría —</option>
+                {catsDisponibles.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+              </select>
+              <button
+                onClick={agregarCat}
+                disabled={!catSel}
+                style={{ background: catSel ? "#1a3a2a" : "#d1fae5", color: catSel ? "#4ade80" : "#9ca3af", border: "none", borderRadius: 10, padding: "9px 16px", cursor: catSel ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 700, flexShrink: 0 }}
+              >
+                Agregar
+              </button>
+            </div>
+          </Card>
+          {catsAgregadas.length === 0 && (
+            <div style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", padding: "6px 0" }}>
+              Sin restricción — todas las categorías de la competencia participan
+            </div>
+          )}
+          {catsAgregadas.map(cat => {
+            const visible = catVisibilidad[cat.docId] ?? cat.visible;
+            return (
+              <Card key={cat.docId}>
+                <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
+                  <span style={{ fontSize: 11, color: visible ? "#166534" : "#6b7280" }}>{visible ? "Visible" : "Oculta"}</span>
+                  <Switch value={visible} onChange={() => toggleVisibleCat(cat.docId, visible)} />
+                  <button onClick={() => quitarCat(cat.docId)} style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
+                </div>
+              </Card>
+            );
+          })}
+        </>
+      )}
+
+      <BtnPrimary onClick={onGuardar} disabled={guardando} fullWidth>
+        {guardando ? "Guardando..." : `Guardar · ${nClubes} club${nClubes !== 1 ? "es" : ""} · ${nCats} categoría${nCats !== 1 ? "s" : ""}`}
+      </BtnPrimary>
     </>
   );
 }
@@ -473,10 +565,11 @@ function TabCategorias({ categorias, cargando, onAgregar, onEliminar, onToggleVi
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB TABLAS
 // ══════════════════════════════════════════════════════════════════════════════
-function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf }) {
+function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf, tablaAcumConf, setTablaAcumConf, compRef }) {
   const opciones = [
     ...categorias.map(c => ({ id: c.docId, label: c.nombre, tipo: "cat" })),
-    ...(tablaConf.tablaGeneralActiva ? [{ id: "__general__", label: "Tabla General", tipo: "general" }] : []),
+    ...(tablaConf.tablaGeneralActiva    ? [{ id: "__general__",  label: "Tabla General",   tipo: "general"   }] : []),
+    ...(tablaAcumConf?.tablaAcumuladaActiva ? [{ id: "__acumulada__", label: "Tabla Acumulada", tipo: "acumulada" }] : []),
   ];
 
   const [selId,             setSelId]             = useState(opciones[0]?.id || "");
@@ -510,8 +603,7 @@ function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf 
         ]);
         setPartidos(pSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
         setSanciones(catSnap.data()?.sanciones || []);
-      } else {
-        // General: sumar todas las categorías seleccionadas
+      } else if (sel.tipo === "general") {
         const catsSelIds = tablaConf.tablaGeneralCategorias || [];
         if (catsSelIds.length === 0) {
           setPartidos([]);
@@ -526,6 +618,27 @@ function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf 
         );
         setPartidos(results.flat());
         setSanciones(tablaConf.tablaGeneralSanciones || []);
+      } else {
+        // Acumulada: sumar partidos de todas las zonas seleccionadas × todas las categorías
+        const zonaIds = tablaAcumConf?.tablaAcumuladaZonas || [];
+        if (zonaIds.length === 0 || categorias.length === 0) {
+          setPartidos([]);
+          setSanciones(tablaAcumConf?.tablaAcumuladaSanciones || []);
+          return;
+        }
+        const results = await Promise.all(
+          zonaIds.flatMap(zId =>
+            categorias.map(cat => {
+              const zRef   = doc(collection(compRef, "zonas"), zId);
+              const catRef = doc(collection(zRef, "categorias"), cat.docId);
+              return getDocs(collection(catRef, "partidos"))
+                .then(snap => snap.docs.map(d => ({ docId: d.id, ...d.data() })))
+                .catch(() => []);
+            })
+          )
+        );
+        setPartidos(results.flat());
+        setSanciones(tablaAcumConf?.tablaAcumuladaSanciones || []);
       }
     } finally {
       setCargando(false);
@@ -533,6 +646,7 @@ function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf 
   }
 
   const pV = sel?.tipo === "general" ? (tablaConf.tablaGeneralPuntosVictoria ?? 3) : (zona.puntosPorVictoria ?? 3);
+  // Para acumulada se usan los puntos de esta zona
   const pE = zona.puntosPorEmpate ?? 1;
 
   const tabla = useMemo(() => {
@@ -559,6 +673,9 @@ function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf 
     if (sel.tipo === "general") {
       setTablaConf(c => ({ ...c, tablaGeneralSanciones: nuevas }));
       await updateDoc(zonaRef, { tablaGeneralSanciones: nuevas });
+    } else if (sel.tipo === "acumulada") {
+      setTablaAcumConf(c => ({ ...c, tablaAcumuladaSanciones: nuevas }));
+      await updateDoc(zonaRef, { tablaAcumuladaSanciones: nuevas });
     } else {
       await updateDoc(doc(collection(zonaRef, "categorias"), selId), { sanciones: nuevas });
     }
@@ -571,6 +688,9 @@ function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf 
     if (sel.tipo === "general") {
       setTablaConf(c => ({ ...c, tablaGeneralSanciones: nuevas }));
       await updateDoc(zonaRef, { tablaGeneralSanciones: nuevas });
+    } else if (sel.tipo === "acumulada") {
+      setTablaAcumConf(c => ({ ...c, tablaAcumuladaSanciones: nuevas }));
+      await updateDoc(zonaRef, { tablaAcumuladaSanciones: nuevas });
     } else {
       await updateDoc(doc(collection(zonaRef, "categorias"), selId), { sanciones: nuevas });
     }
@@ -578,7 +698,7 @@ function TabTablas({ zonaRef, zona, clubes, categorias, tablaConf, setTablaConf 
     setPendingDelSancion(null);
   }
 
-  if (opciones.length === 0) return <EmptyState emoji="📋" titulo="Sin categorías" descripcion="Agregá categorías primero" />;
+  if (opciones.length === 0) return <EmptyState emoji="📋" titulo="Sin datos" descripcion="Agregá categorías o activá la tabla acumulada" />;
 
   return (
     <>

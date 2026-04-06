@@ -1811,6 +1811,48 @@ function BannerInstalar() {
   );
 }
 
+// ── Banner de actualización SW ────────────────────────────────────────────────
+function UpdateBanner() {
+  const [reg, setReg] = useState(null);
+
+  useEffect(() => {
+    function onUpdate(e) { setReg(e.detail); }
+    window.addEventListener('swUpdateAvailable', onUpdate);
+    return () => window.removeEventListener('swUpdateAvailable', onUpdate);
+  }, []);
+
+  if (!reg) return null;
+
+  function actualizar() {
+    if (reg.waiting) {
+      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }
+    // controllerchange en index.html se encarga del reload
+  }
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#1a3a2a", color: "#fff",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "12px 16px", gap: 12,
+      boxShadow: "0 -2px 12px rgba(0,0,0,0.25)",
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 500 }}>Nueva versión disponible</span>
+      <button
+        onClick={actualizar}
+        style={{
+          background: "#4ade80", color: "#1a3a2a", border: "none",
+          borderRadius: 8, padding: "7px 16px",
+          fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0,
+        }}
+      >
+        Actualizar
+      </button>
+    </div>
+  );
+}
+
 // ── App principal ─────────────────────────────────────────────────────────────
 export default function App() {
   const [cfg,          setCfg]          = useState(CFG_DEFAULT);
@@ -1940,6 +1982,7 @@ export default function App() {
           />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
         </div>
+        <UpdateBanner />
       </CfgCtx.Provider>
     );
   }
@@ -2050,6 +2093,7 @@ export default function App() {
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
       </div>
+      <UpdateBanner />
     </CfgCtx.Provider>
   );
 }

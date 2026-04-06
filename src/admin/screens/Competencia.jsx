@@ -1,12 +1,16 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, setDoc, writeBatch } from "firebase/firestore";
+import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, setDoc, writeBatch, query, where } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../../firebase";
-import { HeaderAdmin, Card, Modal, ConfirmModal, Switch, BtnPrimary, Campo, InputAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
+import { HeaderAdmin, Card, Modal, ConfirmModal, BtnPrimary, Campo, InputAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
 
 const TIPO_LABEL = {
-  liga:   "Liga",
-  copa:   "Copa",
+  liga:       "Liga",
+  copa:       "Copa",
+  copa_club:  "Copa",
+  elim_club:  "Eliminatorias",
+  copa_cat:   "Eliminatorias",
+  elim_equipos: "Eliminatorias",
 };
 
 const PARTICIPANTES_LABEL = {
@@ -112,6 +116,11 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
     if (tab === "categorias" && categorias.length === 0 && !cargandoCat) cargarCategorias();
   }, [tab]);
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function normNombre(s) {
+    return (s || "").trim().toLowerCase();
+  }
+
   // ── Zona actions ──────────────────────────────────────────────────────────
   async function reordenarZona(idx, dir) {
     const t = idx + dir;
@@ -126,6 +135,9 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
 
   async function crearZona() {
     if (!nombreZona.trim()) { setErrorZ("El nombre es requerido"); return; }
+    if (zonas.some(z => normNombre(z.nombre) === normNombre(nombreZona))) {
+      setErrorZ("Ya existe una zona con ese nombre"); return;
+    }
     setGuardandoZ(true);
     try {
       await addDoc(zonasCol, { nombre: nombreZona.trim(), creadoEn: Date.now(), orden: zonas.length });
@@ -145,16 +157,26 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
     await cargarZonas();
   }
 
-  // ── Club actions ──────────────────────────────────────────────────────────
   async function editarZona() {
     if (!editNombreZona.trim()) return;
+    if (zonas.some(z => z.docId !== modalEditZona.docId && normNombre(z.nombre) === normNombre(editNombreZona))) {
+      setErrorZ("Ya existe una zona con ese nombre");
+      setModalEditZona(null);
+      return;
+    }
     await updateDoc(doc(zonasCol, modalEditZona.docId), { nombre: editNombreZona.trim() });
     setModalEditZona(null);
     await cargarZonas();
   }
 
+  // ── Club actions ──────────────────────────────────────────────────────────
   async function editarClub() {
     if (!editNombreClub.trim()) return;
+    if (clubes.some(c => c.docId !== modalEditClub.docId && normNombre(c.nombre) === normNombre(editNombreClub))) {
+      setErrorC("Ya existe un club con ese nombre");
+      setModalEditClub(null);
+      return;
+    }
     setEditandoClub(true);
     try {
       const updates = { nombre: editNombreClub.trim() };
@@ -172,15 +194,12 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
     }
   }
 
-  async function editarCategoria() {
-    if (!editNombreCat.trim()) return;
-    await updateDoc(doc(catsCol, modalEditCat.docId), { nombre: editNombreCat.trim() });
-    setModalEditCat(null);
-    await cargarCategorias();
-  }
-
   async function agregarClub() {
     if (!nuevoClub.trim()) return;
+    if (clubes.some(c => normNombre(c.nombre) === normNombre(nuevoClub))) {
+      setErrorC("Ya existe un club con ese nombre");
+      return;
+    }
     setSubiendoLogo(true);
     try {
       const newRef = doc(clubesCol);
@@ -201,27 +220,88 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
   }
 
   async function eliminarClub() {
-    await deleteDoc(doc(clubesCol, pendingDelClub.docId));
+    const club = pendingDelClub;
     setPendingDelClub(null);
+    // Verificar jugadores
+    try {
+      const jugSnap = await getDocs(query(
+        collection(ligaRef, "jugadores"),
+        where("clubId", "==", club.docId),
+        where("competenciaId", "==", competencia.docId)
+      ));
+      if (!jugSnap.empty) {
+        setErrorC(`No se puede eliminar: "${club.nombre}" tiene ${jugSnap.size} jugador${jugSnap.size !== 1 ? "es" : ""} asignado${jugSnap.size !== 1 ? "s" : ""}.`);
+        return;
+      }
+      // Verificar partidos jugados en cualquier zona
+      const zonasSnap = await getDocs(zonasCol);
+      for (const zonaDoc of zonasSnap.docs) {
+        const catsSnap = await getDocs(collection(zonaDoc.ref, "categorias"));
+        for (const catDoc of catsSnap.docs) {
+          const partidosSnap = await getDocs(query(
+            collection(catDoc.ref, "partidos"),
+            where("jugado", "==", true)
+          ));
+          const tienePartidos = partidosSnap.docs.some(d => {
+            const p = d.data();
+            return p.localId === club.docId || p.visitanteId === club.docId;
+          });
+          if (tienePartidos) {
+            setErrorC(`No se puede eliminar: "${club.nombre}" tiene partidos jugados.`);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      setErrorC("Error al verificar: " + e.message);
+      return;
+    }
+    await deleteDoc(doc(clubesCol, club.docId));
     await cargarClubes();
   }
 
   // ── Categoría actions ─────────────────────────────────────────────────────
   async function agregarCategoria() {
     if (!nuevaCat.trim()) return;
-    await addDoc(catsCol, { nombre: nuevaCat.trim(), visible: true, orden: categorias.length, creadaEn: Date.now() });
+    if (categorias.some(c => normNombre(c.nombre) === normNombre(nuevaCat))) {
+      setErrorCat("Ya existe una categoría con ese nombre");
+      return;
+    }
+    await addDoc(catsCol, { nombre: nuevaCat.trim(), orden: categorias.length, creadaEn: Date.now() });
     setNuevaCat(""); setModalCat(false);
     await cargarCategorias();
   }
 
-  async function toggleVisibleCat(cat) {
-    await updateDoc(doc(catsCol, cat.docId), { visible: !cat.visible });
-    setCategorias(cs => cs.map(c => c.docId === cat.docId ? { ...c, visible: !c.visible } : c));
+  async function editarCategoria() {
+    if (!editNombreCat.trim()) return;
+    if (categorias.some(c => c.docId !== modalEditCat.docId && normNombre(c.nombre) === normNombre(editNombreCat))) {
+      setErrorCat("Ya existe una categoría con ese nombre");
+      setModalEditCat(null);
+      return;
+    }
+    await updateDoc(doc(catsCol, modalEditCat.docId), { nombre: editNombreCat.trim() });
+    setModalEditCat(null);
+    await cargarCategorias();
   }
 
   async function eliminarCategoria() {
-    await deleteDoc(doc(catsCol, pendingDelCat.docId));
+    const cat = pendingDelCat;
     setPendingDelCat(null);
+    try {
+      const jugSnap = await getDocs(query(
+        collection(ligaRef, "jugadores"),
+        where("categoriaId", "==", cat.docId),
+        where("competenciaId", "==", competencia.docId)
+      ));
+      if (!jugSnap.empty) {
+        setErrorCat(`No se puede eliminar: "${cat.nombre}" tiene ${jugSnap.size} jugador${jugSnap.size !== 1 ? "es" : ""} asignado${jugSnap.size !== 1 ? "s" : ""}.`);
+        return;
+      }
+    } catch (e) {
+      setErrorCat("Error al verificar: " + e.message);
+      return;
+    }
+    await deleteDoc(doc(catsCol, cat.docId));
     await cargarCategorias();
   }
 
@@ -261,7 +341,7 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button onClick={() => setModalZona(true)}
+              <button onClick={() => { setModalZona(true); setNombreZona(""); setErrorZ(""); }}
                 style={{ background: "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 8, padding: "7px 13px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                 + Zona
               </button>
@@ -270,7 +350,6 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
             {errorZ && !cargandoZ && (
               <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 13 }}>
                 {errorZ}
-                <button onClick={cargarZonas} style={{ marginLeft: 10, textDecoration: "underline", background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>Reintentar</button>
               </div>
             )}
             {cargandoZ ? <Spinner /> : zonas.length === 0 && !errorZ ? (
@@ -294,12 +373,12 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
         {tab === "clubes" && (
           <>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button onClick={() => setModalClub(true)}
+              <button onClick={() => { setModalClub(true); setErrorC(""); }}
                 style={{ background: "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 8, padding: "7px 13px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                 + Club
               </button>
             </div>
-            {errorC && <div style={{ color: "#dc2626", fontSize: 13 }}>{errorC}</div>}
+            {errorC && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 14px", color: "#dc2626", fontSize: 13 }}>{errorC}</div>}
             {cargandoC ? <Spinner /> : clubes.length === 0 ? (
               <EmptyState emoji="🏟" titulo="Sin clubes" descripcion="Agregá los clubes de esta competencia" />
             ) : clubes.map(club => (
@@ -307,7 +386,7 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
                 <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
                   <LogoClub club={club} size={40} />
                   <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
-                  <button onClick={() => { setModalEditClub(club); setEditNombreClub(club.nombre); setEditLogoPreview(club.logoUrl || null); setEditLogoFile(null); }}
+                  <button onClick={() => { setModalEditClub(club); setEditNombreClub(club.nombre); setEditLogoPreview(club.logoUrl || null); setEditLogoFile(null); setErrorC(""); }}
                     style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 15, padding: "4px 6px" }}>✏️</button>
                   <button onClick={() => setPendingDelClub(club)}
                     style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: "4px 6px" }}>🗑</button>
@@ -321,21 +400,19 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
         {tab === "categorias" && (
           <>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button onClick={() => setModalCat(true)}
+              <button onClick={() => { setModalCat(true); setErrorCat(""); }}
                 style={{ background: "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 8, padding: "7px 13px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                 + Categoría
               </button>
             </div>
-            {errorCat && <div style={{ color: "#dc2626", fontSize: 13 }}>{errorCat}</div>}
+            {errorCat && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 14px", color: "#dc2626", fontSize: 13 }}>{errorCat}</div>}
             {cargandoCat ? <Spinner /> : categorias.length === 0 ? (
               <EmptyState emoji="📋" titulo="Sin categorías" descripcion="Agregá las categorías de esta competencia" />
             ) : categorias.map(cat => (
               <Card key={cat.docId}>
                 <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
-                  <span style={{ fontSize: 11, color: cat.visible ? "#166534" : "#6b7280" }}>{cat.visible ? "Visible" : "Oculta"}</span>
-                  <Switch value={cat.visible} onChange={() => toggleVisibleCat(cat)} />
-                  <button onClick={() => { setModalEditCat(cat); setEditNombreCat(cat.nombre); }}
+                  <button onClick={() => { setModalEditCat(cat); setEditNombreCat(cat.nombre); setErrorCat(""); }}
                     style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 15, padding: "4px 6px" }}>✏️</button>
                   <button onClick={() => setPendingDelCat(cat)}
                     style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: "4px 6px" }}>🗑</button>
@@ -366,9 +443,9 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
 
       {/* Modal Club */}
       {modalClub && (
-        <Modal titulo="Agregar Club" onClose={() => { setModalClub(false); setNuevoClub(""); setLogoFile(null); setLogoPreview(null); }}>
+        <Modal titulo="Agregar Club" onClose={() => { setModalClub(false); setNuevoClub(""); setLogoFile(null); setLogoPreview(null); setErrorC(""); }}>
           <Campo label="Nombre del club">
-            <InputAdmin placeholder="Club Atlético..." value={nuevoClub} onChange={e => setNuevoClub(e.target.value)} autoFocus onKeyDown={e => !logoFile && e.key === "Enter" && agregarClub()} />
+            <InputAdmin placeholder="Club Atlético..." value={nuevoClub} onChange={e => { setNuevoClub(e.target.value); setErrorC(""); }} autoFocus onKeyDown={e => !logoFile && e.key === "Enter" && agregarClub()} />
           </Campo>
           <Campo label="Logo (opcional)">
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -396,20 +473,12 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
                     </button>
                   </>
                 ) : (
-                  <label style={{ cursor: "pointer" }}>
-                    <div style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>Elegir imagen</div>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>JPG, PNG o WebP</div>
-                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => {
-                      const file = e.target.files[0];
-                      if (!file) return;
-                      setLogoFile(file);
-                      setLogoPreview(URL.createObjectURL(file));
-                    }} />
-                  </label>
+                  <span style={{ fontSize: 12, color: "#9ca3af" }}>Toca la imagen para elegir</span>
                 )}
               </div>
             </div>
           </Campo>
+          {errorC && <div style={{ color: "#dc2626", fontSize: 13 }}>{errorC}</div>}
           <BtnPrimary onClick={agregarClub} disabled={subiendoLogo} fullWidth>
             {subiendoLogo ? "Subiendo..." : "Agregar"}
           </BtnPrimary>
@@ -417,7 +486,7 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
       )}
       {pendingDelClub && (
         <ConfirmModal
-          mensaje={`Eliminás el club "${pendingDelClub.nombre}".`}
+          mensaje={`Eliminás el club "${pendingDelClub.nombre}". Se verificará que no tenga jugadores ni partidos.`}
           onConfirmar={eliminarClub}
           onCancelar={() => setPendingDelClub(null)}
         />
@@ -425,16 +494,17 @@ export default function Competencia({ liga, temporada, competencia, onBack, onSe
 
       {/* Modal Categoría */}
       {modalCat && (
-        <Modal titulo="Agregar Categoría" onClose={() => { setModalCat(false); setNuevaCat(""); }}>
+        <Modal titulo="Agregar Categoría" onClose={() => { setModalCat(false); setNuevaCat(""); setErrorCat(""); }}>
           <Campo label="Nombre de la categoría">
-            <InputAdmin placeholder="Sub 13, Primera División..." value={nuevaCat} onChange={e => setNuevaCat(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && agregarCategoria()} />
+            <InputAdmin placeholder="Sub 13, Primera División..." value={nuevaCat} onChange={e => { setNuevaCat(e.target.value); setErrorCat(""); }} autoFocus onKeyDown={e => e.key === "Enter" && agregarCategoria()} />
           </Campo>
+          {errorCat && <div style={{ color: "#dc2626", fontSize: 13 }}>{errorCat}</div>}
           <BtnPrimary onClick={agregarCategoria} fullWidth>Agregar</BtnPrimary>
         </Modal>
       )}
       {pendingDelCat && (
         <ConfirmModal
-          mensaje={`Eliminás la categoría "${pendingDelCat.nombre}".`}
+          mensaje={`Eliminás la categoría "${pendingDelCat.nombre}". Solo es posible si no tiene jugadores.`}
           onConfirmar={eliminarCategoria}
           onCancelar={() => setPendingDelCat(null)}
         />

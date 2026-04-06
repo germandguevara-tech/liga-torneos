@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where } from "firebase/firestore";
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, writeBatch } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../../firebase";
 import { HeaderAdmin, Card, Modal, BtnPrimary, Campo, InputAdmin, SelectAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
@@ -31,6 +31,12 @@ function ModalJugador({ jugador, ligaId, zonas, allClubes, allCats, onGuardar, o
   const [guardando,   setGuardando]   = useState(false);
   const [error,       setError]       = useState("");
   const [confirmDel,  setConfirmDel]  = useState(false);
+
+  // Categorías ordenadas ascendente
+  const catsOrdenadas = useMemo(() =>
+    [...allCats].sort((a, b) => a.nombre.localeCompare(b.nombre)),
+    [allCats]
+  );
 
   useEffect(() => {
     if (!jugador) { setClubId(""); setCatId(""); }
@@ -93,7 +99,7 @@ function ModalJugador({ jugador, ligaId, zonas, allClubes, allCats, onGuardar, o
         <Campo label="Categoría *">
           <SelectAdmin value={catId} onChange={e => setCatId(e.target.value)}>
             <option value="">— Seleccionar —</option>
-            {allCats.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+            {catsOrdenadas.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
           </SelectAdmin>
         </Campo>
       </div>
@@ -258,18 +264,20 @@ function ModalExcel({ zonas, allClubes, allCats, onImportar, onClose }) {
 
 // ── Pantalla principal ────────────────────────────────────────────────────────
 export default function JugadoresAdmin({ liga, temporada, competencia, onBack }) {
-  const [tab,        setTab]        = useState("lista");
-  const [zonas,      setZonas]      = useState([]);
-  const [allClubes,  setAllClubes]  = useState([]);
-  const [allCats,    setAllCats]    = useState([]);
-  const [jugadores,  setJugadores]  = useState([]);
-  const [cargando,   setCargando]   = useState(true);
-  const [modalJug,   setModalJug]   = useState(null);  // null | "nuevo" | jugadorObj
-  const [modalExcel, setModalExcel] = useState(false);
-  const [filtroZona,  setFiltroZona]  = useState("");
-  const [filtroCat,   setFiltroCat]   = useState("");
-  const [filtroClub,  setFiltroClub]  = useState("");
-  const [busqueda,    setBusqueda]    = useState("");
+  const [tab,          setTab]          = useState("lista");
+  const [zonas,        setZonas]        = useState([]);
+  const [allClubes,    setAllClubes]    = useState([]);
+  const [allCats,      setAllCats]      = useState([]);
+  const [jugadores,    setJugadores]    = useState([]);
+  const [cargando,     setCargando]     = useState(true);
+  const [modalJug,     setModalJug]     = useState(null);
+  const [modalExcel,   setModalExcel]   = useState(false);
+  const [filtroCat,    setFiltroCat]    = useState("");
+  const [filtroClub,   setFiltroClub]   = useState("");
+  const [busqueda,     setBusqueda]     = useState("");
+  const [seleccionados, setSeleccionados] = useState(new Set());
+  const [confirmBorrarSel, setConfirmBorrarSel] = useState(false);
+  const [borrandoSel,  setBorrandoSel]  = useState(false);
 
   const ligaRef = doc(db, "ligas", liga.docId);
   const compRef = doc(db, "ligas", liga.docId, "temporadas", temporada.docId, "competencias", competencia.docId);
@@ -284,7 +292,9 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
     ]);
     setZonas(zonasSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
     setAllClubes(clubesSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
-    setAllCats(catsSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
+    const cats = catsSnap.docs.map(d => ({ docId: d.id, ...d.data() }));
+    cats.sort((a, b) => a.nombre.localeCompare(b.nombre));
+    setAllCats(cats);
     setJugadores(jugSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
     setCargando(false);
   }
@@ -293,7 +303,6 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
 
   const jugFiltrados = useMemo(() => {
     return jugadores.filter(j => {
-      if (filtroZona  && j.zonaId !== filtroZona)     return false;
       if (filtroCat   && j.categoriaId !== filtroCat) return false;
       if (filtroClub  && j.clubId !== filtroClub)     return false;
       if (busqueda) {
@@ -302,7 +311,7 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
       }
       return true;
     }).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
-  }, [jugadores, filtroZona, filtroCat, filtroClub, busqueda]);
+  }, [jugadores, filtroCat, filtroClub, busqueda]);
 
   const duplicados = useMemo(() => {
     const porDni = {};
@@ -313,6 +322,48 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
     });
     return Object.entries(porDni).filter(([, arr]) => arr.length > 1).map(([dni, arr]) => ({ dni, jugadores: arr }));
   }, [jugadores]);
+
+  function toggleSeleccion(docId) {
+    setSeleccionados(prev => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  }
+
+  function seleccionarTodos() {
+    setSeleccionados(prev => {
+      const ids = jugFiltrados.map(j => j.docId);
+      const todosSel = ids.every(id => prev.has(id));
+      if (todosSel) {
+        const next = new Set(prev);
+        ids.forEach(id => next.delete(id));
+        return next;
+      } else {
+        const next = new Set(prev);
+        ids.forEach(id => next.add(id));
+        return next;
+      }
+    });
+  }
+
+  async function borrarSeleccionados() {
+    setBorrandoSel(true);
+    try {
+      const ids = [...seleccionados];
+      for (let i = 0; i < ids.length; i += 400) {
+        const batch = writeBatch(db);
+        ids.slice(i, i + 400).forEach(id => batch.delete(doc(ligaRef, "jugadores", id)));
+        await batch.commit();
+      }
+      setJugadores(prev => prev.filter(j => !seleccionados.has(j.docId)));
+      setSeleccionados(new Set());
+    } finally {
+      setBorrandoSel(false);
+      setConfirmBorrarSel(false);
+    }
+  }
 
   async function guardarJugador({ docId, fotoFile, ...datos }) {
     if (docId) {
@@ -365,8 +416,8 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
     setModalExcel(false);
   }
 
-  const catsParaFiltro   = allCats;
-  const clubesParaFiltro = allClubes;
+  const todosLosFiltradosSeleccionados = jugFiltrados.length > 0 && jugFiltrados.every(j => seleccionados.has(j.docId));
+  const algunoFiltradoSeleccionado = jugFiltrados.some(j => seleccionados.has(j.docId));
 
   return (
     <div style={{ minHeight: "100vh", background: "#f0fdf4", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
@@ -397,20 +448,35 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
                   </button>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <SelectAdmin value={filtroZona} onChange={e => { setFiltroZona(e.target.value); setFiltroCat(""); setFiltroClub(""); }} style={{ flex: 1, minWidth: 100 }}>
-                    <option value="">Todas las zonas</option>
-                    {zonas.map(z => <option key={z.docId} value={z.docId}>{z.nombre}</option>)}
-                  </SelectAdmin>
-                  <SelectAdmin value={filtroCat} onChange={e => setFiltroCat(e.target.value)} style={{ flex: 1, minWidth: 100 }}>
+                  <SelectAdmin value={filtroCat} onChange={e => { setFiltroCat(e.target.value); setSeleccionados(new Set()); }} style={{ flex: 1, minWidth: 100 }}>
                     <option value="">Todas las cats.</option>
-                    {catsParaFiltro.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+                    {allCats.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
                   </SelectAdmin>
-                  <SelectAdmin value={filtroClub} onChange={e => setFiltroClub(e.target.value)} style={{ flex: 1, minWidth: 100 }}>
+                  <SelectAdmin value={filtroClub} onChange={e => { setFiltroClub(e.target.value); setSeleccionados(new Set()); }} style={{ flex: 1, minWidth: 100 }}>
                     <option value="">Todos los clubes</option>
-                    {clubesParaFiltro.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+                    {allClubes.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
                   </SelectAdmin>
                 </div>
-                <SeccionLabel>{jugFiltrados.length} jugador{jugFiltrados.length !== 1 ? "es" : ""}</SeccionLabel>
+
+                {/* Acciones de selección */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <SeccionLabel style={{ flex: 1 }}>{jugFiltrados.length} jugador{jugFiltrados.length !== 1 ? "es" : ""}</SeccionLabel>
+                  {jugFiltrados.length > 0 && (
+                    <button
+                      onClick={seleccionarTodos}
+                      style={{ background: "#f0fdf4", border: "1px solid #dcfce7", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#166534", whiteSpace: "nowrap" }}>
+                      {todosLosFiltradosSeleccionados ? "Deseleccionar todos" : `Seleccionar todos (${jugFiltrados.length})`}
+                    </button>
+                  )}
+                  {seleccionados.size > 0 && (
+                    <button
+                      onClick={() => setConfirmBorrarSel(true)}
+                      style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#dc2626", whiteSpace: "nowrap" }}>
+                      🗑 Borrar seleccionados ({seleccionados.size})
+                    </button>
+                  )}
+                </div>
+
                 {jugFiltrados.length === 0 ? (
                   <EmptyState emoji="👤" titulo="Sin jugadores" descripcion="Agregá jugadores manualmente o importá desde Excel" />
                 ) : (
@@ -418,15 +484,25 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
                     {jugFiltrados.map((j, i) => {
                       const club = allClubes.find(c => c.docId === j.clubId);
                       const cat  = allCats.find(c => c.docId === j.categoriaId);
+                      const seleccionado = seleccionados.has(j.docId);
                       return (
-                        <div key={j.docId} onClick={() => setModalJug(j)}
-                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none", cursor: "pointer" }}>
-                          <AvatarJug jug={j} size={36} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 600, fontSize: 13, color: "#111827" }}>{j.apellido}, {j.nombre}</div>
-                            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 1 }}>{club?.nombre || "—"} · {cat?.nombre || "—"}</div>
+                        <div key={j.docId}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none", background: seleccionado ? "#f0fdf4" : "#fff" }}>
+                          <input
+                            type="checkbox"
+                            checked={seleccionado}
+                            onChange={() => toggleSeleccion(j.docId)}
+                            onClick={e => e.stopPropagation()}
+                            style={{ width: 18, height: 18, cursor: "pointer", flexShrink: 0, accentColor: "#1a3a2a" }}
+                          />
+                          <div onClick={() => setModalJug(j)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
+                            <AvatarJug jug={j} size={36} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 600, fontSize: 13, color: "#111827" }}>{j.apellido}, {j.nombre}</div>
+                              <div style={{ fontSize: 11, color: "#6b7280", marginTop: 1 }}>{club?.nombre || "—"} · {cat?.nombre || "—"}</div>
+                            </div>
+                            <span style={{ fontSize: 18, color: "#9ca3af" }}>›</span>
                           </div>
-                          <span style={{ fontSize: 18, color: "#9ca3af" }}>›</span>
                         </div>
                       );
                     })}
@@ -467,6 +543,25 @@ export default function JugadoresAdmin({ liga, temporada, competencia, onBack })
           </>
         )}
       </div>
+
+      {/* Modal confirmación borrar seleccionados */}
+      {confirmBorrarSel && (
+        <Modal titulo="Borrar jugadores seleccionados" onClose={() => setConfirmBorrarSel(false)}>
+          <div style={{ fontSize: 14, color: "#374151", marginBottom: 16 }}>
+            ¿Eliminás {seleccionados.size} jugador{seleccionados.size !== 1 ? "es" : ""}? Esta acción no se puede deshacer.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setConfirmBorrarSel(false)}
+              style={{ flex: 1, background: "#f3f4f6", color: "#374151", border: "none", borderRadius: 10, padding: 11, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              Cancelar
+            </button>
+            <button onClick={borrarSeleccionados} disabled={borrandoSel}
+              style={{ flex: 1, background: borrandoSel ? "#9ca3af" : "#dc2626", color: "#fff", border: "none", borderRadius: 10, padding: 11, cursor: borrandoSel ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700 }}>
+              {borrandoSel ? "Borrando..." : "Sí, eliminar"}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {modalJug && (
         <ModalJugador

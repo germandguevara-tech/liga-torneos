@@ -108,25 +108,118 @@ function calcularTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
   }).sort((a, b) => b.pts - a.pts || b.dg - a.dg || b.gf - a.gf);
 }
 
+// ── Perfil desde goleadores: carga el doc del jugador y delega a VistaJugador ──
+function VistaGoleadorPerfil({ nombre, clubId, partidos, clubes, ligaId, onBack }) {
+  const [jugador,  setJugador]  = useState(null);
+  const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    const partes   = nombre.split(", ");
+    const apellido = partes[0] || nombre;
+    const nombreJ  = partes.slice(1).join(", ") || "";
+    getDocs(query(collection(db, "ligas", ligaId, "jugadores"), where("clubId", "==", clubId)))
+      .then(snap => {
+        const docs = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        const match = docs.find(j => `${j.apellido}, ${j.nombre}` === nombre) || docs.find(j => j.apellido === apellido);
+        setJugador(match || { apellido, nombre: nombreJ, clubId, fotoUrl: null });
+      })
+      .catch(() => {
+        const partes2  = nombre.split(", ");
+        setJugador({ apellido: partes2[0] || nombre, nombre: partes2.slice(1).join(", ") || "", clubId, fotoUrl: null });
+      })
+      .finally(() => setCargando(false));
+  }, [nombre, clubId]);
+
+  if (cargando) return (
+    <div>
+      <Header onBack={onBack} titulo={nombre} subtitulo="Perfil del jugador" />
+      <Spinner />
+    </div>
+  );
+  return <VistaJugador jugador={jugador} partidos={partidos} clubes={clubes} onBack={onBack} />;
+}
+
 // ── Perfil del jugador ────────────────────────────────────────────────────────
-function VistaJugador({ jugador, partidos, onBack }) {
-  const goles = partidos
+function VistaJugador({ jugador, partidos, clubes, onBack }) {
+  const nombreCompleto = `${jugador.apellido}, ${jugador.nombre}`;
+
+  // Construir detalle de goles: una entrada por partido (agrupado)
+  const detalleGoles = partidos
     .filter(p => p.jugado && Array.isArray(p.goles))
-    .reduce((acc, p) => acc + p.goles
-      .filter(g => g.nombre === jugador.nombre && g.equipo === jugador.clubId)
-      .reduce((s, g) => s + (g.cantidad || 1), 0), 0);
+    .flatMap(p => {
+      const esLocal = jugador.clubId === p.localId;
+      const rivalId = esLocal ? p.visitanteId : p.localId;
+      const rival = (clubes || []).find(c => c.docId === rivalId);
+      const cantidad = (p.goles || [])
+        .filter(g => {
+          const clubId = g.equipo === "local" ? p.localId : p.visitanteId;
+          return g.nombre === nombreCompleto && clubId === jugador.clubId;
+        })
+        .reduce((s, g) => s + (g.cantidad || 1), 0);
+      return cantidad > 0 ? [{ rival: rival?.nombre || "—", jornada: p.jornada, cantidad }] : [];
+    });
+  const totalGoles = detalleGoles.reduce((s, g) => s + g.cantidad, 0);
 
-  const amarillas = partidos
+  // Detalle de tarjetas amarillas
+  const detalleAmarillas = partidos
     .filter(p => p.jugado && Array.isArray(p.tarjetas))
-    .reduce((acc, p) => acc + p.tarjetas
-      .filter(t => t.nombre === jugador.nombre && t.equipo === jugador.clubId && t.tipo === "amarilla").length, 0);
+    .flatMap(p => {
+      const esLocal = jugador.clubId === p.localId;
+      const rivalId = esLocal ? p.visitanteId : p.localId;
+      const rival = (clubes || []).find(c => c.docId === rivalId);
+      return (p.tarjetas || [])
+        .filter(t => {
+          const clubId = t.equipo === "local" ? p.localId : p.visitanteId;
+          return t.nombre === nombreCompleto && clubId === jugador.clubId && t.tipo === "amarilla";
+        })
+        .map(() => ({ rival: rival?.nombre || "—", jornada: p.jornada }));
+    });
 
-  const rojas = partidos
+  // Detalle de tarjetas rojas
+  const detalleRojas = partidos
     .filter(p => p.jugado && Array.isArray(p.tarjetas))
-    .reduce((acc, p) => acc + p.tarjetas
-      .filter(t => t.nombre === jugador.nombre && t.equipo === jugador.clubId && t.tipo === "roja").length, 0);
+    .flatMap(p => {
+      const esLocal = jugador.clubId === p.localId;
+      const rivalId = esLocal ? p.visitanteId : p.localId;
+      const rival = (clubes || []).find(c => c.docId === rivalId);
+      return (p.tarjetas || [])
+        .filter(t => {
+          const clubId = t.equipo === "local" ? p.localId : p.visitanteId;
+          return t.nombre === nombreCompleto && clubId === jugador.clubId && t.tipo === "roja";
+        })
+        .map(() => ({ rival: rival?.nombre || "—", jornada: p.jornada }));
+    });
 
   const ini = ((jugador.apellido?.[0] || "") + (jugador.nombre?.[0] || "")).toUpperCase();
+
+  function SeccionStat({ emoji, titulo, items, accentBg, accentColor, total }) {
+    const count = total ?? items.length;
+    if (count === 0) return null;
+    return (
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+          {emoji} {titulo} ({count})
+        </div>
+        <Card>
+          {items.map((item, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, background: accentBg, color: accentColor, borderRadius: 6, padding: "2px 7px", flexShrink: 0 }}>
+                {item.cantidad != null ? item.cantidad : ""}{emoji}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  vs {item.rival}
+                </div>
+              </div>
+              {item.jornada != null && (
+                <span style={{ fontSize: 11, color: "#6b7280", flexShrink: 0 }}>Fecha {item.jornada}</span>
+              )}
+            </div>
+          ))}
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -139,17 +232,22 @@ function VistaJugador({ jugador, partidos, onBack }) {
             : <div style={{ width: 96, height: 96, borderRadius: "50%", background: "#dcfce7", border: "3px solid #4ade80", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 32, color: "#1a3a2a" }}>{ini}</div>
           }
         </div>
-        {/* Nombre */}
+        {/* Nombre y club */}
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#111827" }}>{jugador.apellido}, {jugador.nombre}</div>
-        </div>
-        {/* Stats */}
+          {(() => { const club = (clubes || []).find(c => c.docId === jugador.clubId); return club ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 6 }}>
+              <Escudo club={club} size={20} />
+              <span style={{ fontSize: 13, color: "#6b7280", fontWeight: 600 }}>{club.nombre}</span>
+            </div>
+          ) : null; })()}</div>
+        {/* Resumen stats */}
         <Card>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr" }}>
             {[
-              { emoji: "⚽", valor: goles,     label: "Goles" },
-              { emoji: "🟡", valor: amarillas, label: "Amarillas" },
-              { emoji: "🔴", valor: rojas,     label: "Rojas" },
+              { emoji: "⚽", valor: totalGoles,               label: "Goles" },
+              { emoji: "🟡", valor: detalleAmarillas.length, label: "Amarillas" },
+              { emoji: "🔴", valor: detalleRojas.length,     label: "Rojas" },
             ].map((s, i) => (
               <div key={i} style={{ padding: "16px 8px", textAlign: "center", borderLeft: i > 0 ? "1px solid #f0fdf4" : "none" }}>
                 <div style={{ fontSize: 22, marginBottom: 4 }}>{s.emoji}</div>
@@ -159,13 +257,17 @@ function VistaJugador({ jugador, partidos, onBack }) {
             ))}
           </div>
         </Card>
+        {/* Detalle por sección */}
+        <SeccionStat emoji="⚽" titulo="Goles" items={detalleGoles} accentBg="#f0fdf4" accentColor="#166534" total={totalGoles} />
+        <SeccionStat emoji="🟡" titulo="Tarjetas amarillas" items={detalleAmarillas} accentBg="#fefce8" accentColor="#854d0e" />
+        <SeccionStat emoji="🔴" titulo="Tarjetas rojas" items={detalleRojas} accentBg="#fef2f2" accentColor="#dc2626" />
       </div>
     </div>
   );
 }
 
 // ── Vista equipo (plantel público) ────────────────────────────────────────────
-function VistaEquipo({ club, ligaId, catId, partidos, onBack }) {
+function VistaEquipo({ club, ligaId, catId, partidos, clubes, onBack }) {
   const [jugadores, setJugadores] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [jugadorSel, setJugadorSel] = useState(null);
@@ -183,13 +285,61 @@ function VistaEquipo({ club, ligaId, catId, partidos, onBack }) {
   }, [club.docId, catId, ligaId]);
 
   if (jugadorSel) {
-    return <VistaJugador jugador={jugadorSel} partidos={partidos || []} onBack={() => setJugadorSel(null)} />;
+    return <VistaJugador jugador={jugadorSel} partidos={partidos || []} clubes={clubes} onBack={() => setJugadorSel(null)} />;
   }
+
+  const partidosEquipo = (partidos || [])
+    .filter(p => p.jugado && !p.esLibre && (p.localId === club.docId || p.visitanteId === club.docId))
+    .sort((a, b) => (a.jornada || 0) - (b.jornada || 0));
 
   return (
     <div>
-      <Header onBack={onBack} titulo={club.nombre} subtitulo="Plantel" />
-      <div style={{ padding: 14 }}>
+      <Header onBack={onBack} titulo={club.nombre} subtitulo="Vista del equipo" />
+      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Escudo y nombre */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, paddingTop: 8 }}>
+          <Escudo club={club} size={72} />
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#111827" }}>{club.nombre}</div>
+        </div>
+
+        {/* Partidos jugados */}
+        {partidosEquipo.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>Partidos jugados</div>
+            <Card>
+              {partidosEquipo.map((p, i) => {
+                const esLocal = p.localId === club.docId;
+                const rivalId = esLocal ? p.visitanteId : p.localId;
+                const rival = (clubes || []).find(c => c.docId === rivalId);
+                const propios = esLocal ? p.golesLocal : p.golesVisitante;
+                const ajenos  = esLocal ? p.golesVisitante : p.golesLocal;
+                const res = propios > ajenos ? "G" : propios < ajenos ? "P" : "E";
+                const resStyle = res === "G"
+                  ? { background: "#dcfce7", color: "#166534" }
+                  : res === "P"
+                  ? { background: "#fee2e2", color: "#dc2626" }
+                  : { background: "#f3f4f6", color: "#374151" };
+                return (
+                  <div key={p.docId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "2px 7px", flexShrink: 0, ...resStyle }}>{res}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        vs {rival?.nombre || "—"}
+                      </div>
+                      {p.jornada != null && <div style={{ fontSize: 11, color: "#6b7280" }}>Fecha {p.jornada}</div>}
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#111827", background: "#f0fdf4", padding: "3px 9px", borderRadius: 7, flexShrink: 0 }}>
+                      {propios} - {ajenos}
+                    </span>
+                  </div>
+                );
+              })}
+            </Card>
+          </>
+        )}
+
+        {/* Jugadores */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>Jugadores</div>
         {cargando ? <Spinner /> : jugadores.length === 0 ? (
           <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin jugadores registrados</div>
         ) : (
@@ -267,6 +417,9 @@ function PartidoLineal({ partido, clubes, onClick }) {
         <span style={{ fontSize: 10, fontWeight: 600, color: partido.jugado ? "#166534" : "#6b7280", background: partido.jugado ? "#dcfce7" : "#f3f4f6", padding: "1px 7px", borderRadius: 20 }}>
           {partido.jugado ? "Jugado" : (partido.fecha || "Pendiente")}
         </span>
+        {partido.jugado && (!partido.goles || partido.goles.length === 0) && (
+          <span style={{ fontSize: 10, color: "#d97706" }} title="Sin goles cargados">⚠️</span>
+        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, overflow: "hidden", minWidth: 0 }}>
         <Escudo club={visitante} size={22} />
@@ -350,9 +503,10 @@ function TabFairPlay({ partidos, clubes }) {
     clubes.forEach(c => { mapa[c.docId] = { ...c, amarillas: 0, rojas: 0 }; });
     partidos.filter(p => p.jugado && Array.isArray(p.tarjetas)).forEach(p => {
       p.tarjetas.forEach(t => {
-        if (mapa[t.equipo]) {
-          if (t.tipo === "amarilla") mapa[t.equipo].amarillas++;
-          else if (t.tipo === "roja") mapa[t.equipo].rojas++;
+        const clubId = t.equipo === "local" ? p.localId : p.visitanteId;
+        if (mapa[clubId]) {
+          if (t.tipo === "amarilla") mapa[clubId].amarillas++;
+          else if (t.tipo === "roja") mapa[clubId].rojas++;
         }
       });
     });
@@ -388,13 +542,14 @@ function TabFairPlay({ partidos, clubes }) {
   );
 }
 
-function TabGoleadores({ partidos, clubes }) {
+function TabGoleadores({ partidos, clubes, onVerJugador }) {
   const lista = useMemo(() => {
     const mapa = {};
     partidos.filter(p => p.jugado && Array.isArray(p.goles)).forEach(p => {
       p.goles.forEach(g => {
-        const key = `${g.nombre}||${g.equipo}`;
-        if (!mapa[key]) mapa[key] = { nombre: g.nombre, clubId: g.equipo, cantidad: 0 };
+        const clubId = g.equipo === "local" ? p.localId : p.visitanteId;
+        const key = `${g.nombre}||${clubId}`;
+        if (!mapa[key]) mapa[key] = { nombre: g.nombre, clubId, cantidad: 0 };
         mapa[key].cantidad += (g.cantidad || 1);
       });
     });
@@ -411,7 +566,8 @@ function TabGoleadores({ partidos, clubes }) {
         const club = clubes.find(c => c.docId === g.clubId);
         const medalColor = i === 0 ? "#d97706" : i === 1 ? "#6b7280" : i === 2 ? "#b45309" : "#d1d5db";
         return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none" }}>
+          <div key={i} onClick={() => onVerJugador?.({ nombre: g.nombre, clubId: g.clubId })}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: i > 0 ? "1px solid #f0fdf4" : "none", cursor: onVerJugador ? "pointer" : "default" }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: medalColor, width: 16, textAlign: "center" }}>{i + 1}</span>
             <Escudo club={club} size={28} />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -422,6 +578,7 @@ function TabGoleadores({ partidos, clubes }) {
               <span style={{ fontSize: 12 }}>⚽</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#111827" }}>{g.cantidad}</span>
             </div>
+            {onVerJugador && <span style={{ fontSize: 12, color: "#9ca3af" }}>›</span>}
           </div>
         );
       })}
@@ -532,8 +689,8 @@ function VistaPartido({ partido, clubes, onBack }) {
   const local     = clubes.find(c => c.docId === partido.localId);
   const visitante = clubes.find(c => c.docId === partido.visitanteId);
 
-  function GolesPorEquipo({ equipoId }) {
-    const goles = (partido.goles || []).filter(g => g.equipo === equipoId);
+  function GolesPorEquipo({ equipo }) {
+    const goles = (partido.goles || []).filter(g => g.equipo === equipo);
     if (goles.length === 0) return <div style={{ fontSize: 12, color: "#d1d5db" }}>—</div>;
     return goles.map((g, i) => (
       <div key={i} style={{ fontSize: 13, padding: "2px 0", color: "#111827" }}>
@@ -542,8 +699,8 @@ function VistaPartido({ partido, clubes, onBack }) {
     ));
   }
 
-  function TarjetasPorEquipo({ equipoId }) {
-    const tarjetas = (partido.tarjetas || []).filter(t => t.equipo === equipoId);
+  function TarjetasPorEquipo({ equipo }) {
+    const tarjetas = (partido.tarjetas || []).filter(t => t.equipo === equipo);
     if (tarjetas.length === 0) return <div style={{ fontSize: 12, color: "#d1d5db" }}>—</div>;
     return tarjetas.map((t, i) => (
       <div key={i} style={{ fontSize: 13, padding: "2px 0", color: "#111827" }}>
@@ -582,16 +739,16 @@ function VistaPartido({ partido, clubes, onBack }) {
             <Card>
               <div style={{ padding: "9px 14px", background: "#dcfce7", fontSize: 12, fontWeight: 700, color: "#111827" }}>⚽ Goles</div>
               <div style={{ display: "flex" }}>
-                <div style={{ flex: 1, padding: "11px 14px", borderRight: "1px solid #f0fdf4" }}><GolesPorEquipo equipoId={partido.localId} /></div>
-                <div style={{ flex: 1, padding: "11px 14px" }}><GolesPorEquipo equipoId={partido.visitanteId} /></div>
+                <div style={{ flex: 1, padding: "11px 14px", borderRight: "1px solid #f0fdf4" }}><GolesPorEquipo equipo="local" /></div>
+                <div style={{ flex: 1, padding: "11px 14px" }}><GolesPorEquipo equipo="visitante" /></div>
               </div>
             </Card>
             {(partido.tarjetas || []).length > 0 && (
               <Card>
                 <div style={{ padding: "9px 14px", background: "#dcfce7", fontSize: 12, fontWeight: 700, color: "#111827" }}>Tarjetas</div>
                 <div style={{ display: "flex" }}>
-                  <div style={{ flex: 1, padding: "11px 14px", borderRight: "1px solid #f0fdf4" }}><TarjetasPorEquipo equipoId={partido.localId} /></div>
-                  <div style={{ flex: 1, padding: "11px 14px" }}><TarjetasPorEquipo equipoId={partido.visitanteId} /></div>
+                  <div style={{ flex: 1, padding: "11px 14px", borderRight: "1px solid #f0fdf4" }}><TarjetasPorEquipo equipo="local" /></div>
+                  <div style={{ flex: 1, padding: "11px 14px" }}><TarjetasPorEquipo equipo="visitante" /></div>
                 </div>
               </Card>
             )}
@@ -607,20 +764,445 @@ function VistaPartido({ partido, clubes, onBack }) {
   );
 }
 
+// ── Bracket público ───────────────────────────────────────────────────────────
+function TabBracket({ zonaRef, zona, clubes, categorias }) {
+  if (zona.tipo === "copa_club")    return <BracketPorRama zonaRef={zonaRef} clubes={clubes} tipo={zona.tipo} categorias={categorias} />;
+  if (zona.tipo === "copa")         return <BracketPorRama zonaRef={zonaRef} clubes={clubes} tipo={zona.tipo} />;
+  if (zona.tipo === "copa_cat")     return <BracketPorCat  zonaRef={zonaRef} clubes={clubes} categorias={categorias} />;
+  if (zona.tipo === "elim_equipos") return <BracketSimplePublico zonaRef={zonaRef} clubes={clubes} />;
+  return null;
+}
+
+function BracketPorRama({ zonaRef, clubes, tipo, categorias }) {
+  const [ramas,     setRamas]     = useState([]);
+  const [ramaSelId, setRamaSelId] = useState(null);
+  const [cargando,  setCargando]  = useState(true);
+
+  useEffect(() => {
+    getDocs(collection(zonaRef, "ramas"))
+      .then(snap => {
+        const items = snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+        setRamas(items);
+        if (items.length > 0) setRamaSelId(items[0].docId);
+      })
+      .catch(() => {})
+      .finally(() => setCargando(false));
+  }, []);
+
+  if (cargando) return <Spinner />;
+  if (ramas.length === 0) return <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin ramas configuradas</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {ramas.length > 1 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {ramas.map(r => (
+            <button key={r.docId} onClick={() => setRamaSelId(r.docId)}
+              style={{ padding: "6px 14px", borderRadius: 20, border: ramaSelId === r.docId ? "2px solid #4ade80" : "1.5px solid #dcfce7", background: ramaSelId === r.docId ? "#1a3a2a" : "#fff", color: ramaSelId === r.docId ? "#4ade80" : "#374151", cursor: "pointer", fontSize: 12, fontWeight: ramaSelId === r.docId ? 700 : 500 }}>
+              {r.nombre}
+            </button>
+          ))}
+        </div>
+      )}
+      {ramaSelId && (
+        <FasesColumnas
+          key={ramaSelId}
+          parentRef={doc(collection(zonaRef, "ramas"), ramaSelId)}
+          clubes={clubes}
+          tipo={tipo}
+          categorias={categorias}
+        />
+      )}
+    </div>
+  );
+}
+
+function BracketSimplePublico({ zonaRef, clubes }) {
+  return (
+    <FasesColumnas parentRef={zonaRef} clubes={clubes} />
+  );
+}
+
+function BracketPorCat({ zonaRef, clubes, categorias }) {
+  const [catSelId, setCatSelId] = useState(categorias[0]?.docId || "");
+  const cfg = useContext(CfgCtx);
+
+  if (categorias.length === 0) return <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin categorías</div>;
+
+  const selectArrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23166534' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {categorias.length > 1 && (
+        <select value={catSelId} onChange={e => setCatSelId(e.target.value)}
+          style={{ width: "100%", background: "#fff", color: "#111827", border: "1.5px solid #dcfce7", borderRadius: 10, padding: "8px 36px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", backgroundImage: selectArrow, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" }}>
+          {categorias.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+        </select>
+      )}
+      {catSelId && (
+        <FasesColumnas
+          key={catSelId}
+          parentRef={doc(collection(zonaRef, "categorias"), catSelId)}
+          clubes={clubes}
+        />
+      )}
+    </div>
+  );
+}
+
+function FasesColumnas({ parentRef, clubes, tipo, categorias }) {
+  const [fases,     setFases]     = useState([]);
+  const [crucesMap, setCrucesMap] = useState({});
+  const [cargando,  setCargando]  = useState(true);
+
+  useEffect(() => {
+    async function cargar() {
+      try {
+        const fasesCol  = collection(parentRef, "fases");
+        const fasesSnap = await getDocs(fasesCol);
+        const fasesData = fasesSnap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+        const results   = await Promise.all(
+          fasesData.map(f =>
+            getDocs(collection(doc(fasesCol, f.docId), "cruces"))
+              .then(snap => [f.docId, snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))])
+          )
+        );
+        const mapa = {};
+        results.forEach(([id, cruces]) => { mapa[id] = cruces; });
+        setFases(fasesData);
+        setCrucesMap(mapa);
+      } catch {}
+      setCargando(false);
+    }
+    cargar();
+  }, []);
+
+  if (cargando) return <Spinner />;
+  if (fases.length === 0) return <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin fases configuradas</div>;
+
+  return (
+    <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ display: "flex", gap: 10, minWidth: fases.length * 190 }}>
+        {fases.map(fase => (
+          <div key={fase.docId} style={{ flex: 1, minWidth: 180, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ background: "#1a3a2a", color: "#4ade80", borderRadius: 10, padding: "8px 12px", textAlign: "center", fontWeight: 700, fontSize: 13 }}>
+              {fase.nombre}
+            </div>
+            {(crucesMap[fase.docId] || []).length === 0 ? (
+              <div style={{ background: "#f9fafb", borderRadius: 10, padding: "16px 8px", textAlign: "center", color: "#d1d5db", fontSize: 12 }}>Sin cruces</div>
+            ) : (
+              (crucesMap[fase.docId] || []).map(cruce => (
+                <CruceCardPublico key={cruce.docId} cruce={cruce} fase={fase} clubes={clubes} tipo={tipo} categorias={categorias} />
+              ))
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function calcGanadorClub(cruce) {
+  let ptL = 0, ptV = 0, gfL = 0, gfV = 0;
+  for (const r of Object.values(cruce.catResultados || {})) {
+    const gl = r.golL ?? 0, gv = r.golV ?? 0;
+    gfL += gl; gfV += gv;
+    if (gl > gv) ptL += 3;
+    else if (gl < gv) ptV += 3;
+    else { ptL += 1; ptV += 1; }
+  }
+  if (ptL > ptV) return { ganadorId: cruce.localId, ptL, ptV, gfL, gfV };
+  if (ptV > ptL) return { ganadorId: cruce.visitanteId, ptL, ptV, gfL, gfV };
+  if (gfL > gfV) return { ganadorId: cruce.localId, ptL, ptV, gfL, gfV };
+  if (gfV > gfL) return { ganadorId: cruce.visitanteId, ptL, ptV, gfL, gfV };
+  if (cruce.catPenalesId) {
+    const r = (cruce.catResultados || {})[cruce.catPenalesId];
+    if (r) {
+      const pl = r.penL ?? 0, pv = r.penV ?? 0;
+      if (pl > pv) return { ganadorId: cruce.localId, ptL, ptV, gfL, gfV, pen: { l: pl, v: pv } };
+      if (pv > pl) return { ganadorId: cruce.visitanteId, ptL, ptV, gfL, gfV, pen: { l: pl, v: pv } };
+    }
+  }
+  return { ganadorId: null, ptL, ptV, gfL, gfV };
+}
+
+function CruceCardPublico({ cruce, fase, clubes, tipo, categorias }) {
+  const lClub = clubes.find(c => c.docId === cruce.localId);
+  const vClub = clubes.find(c => c.docId === cruce.visitanteId);
+
+  if (tipo === "copa_club") {
+    const { ganadorId, ptL, ptV, gfL, gfV, pen } = cruce.jugado ? calcGanadorClub(cruce) : { ganadorId: null, ptL: 0, ptV: 0, gfL: 0, gfV: 0 };
+    return (
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #dcfce7", overflow: "hidden", boxShadow: sombra }}>
+        <ClubFilaBracket club={lClub} nombre={cruce.localNombre} ganador={ganadorId === cruce.localId}
+          extra={cruce.jugado ? `${ptL}pts · ${gfL}gf` : null} />
+        <div style={{ padding: "3px 10px", background: "#f9fafb", display: "flex", alignItems: "center", gap: 6 }}>
+          {cruce.jugado ? (
+            <>
+              <span style={{ fontSize: 10, color: "#6b7280", flex: 1, textAlign: "center" }}>Puntos totales</span>
+              {pen && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#854d0e", background: "#fef9c3", border: "1px solid #fde047", padding: "1px 5px", borderRadius: 20 }}>
+                  Pen {pen.l}–{pen.v}
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ fontSize: 11, color: "#9ca3af", flex: 1, textAlign: "center" }}>Pendiente</span>
+          )}
+        </div>
+        <ClubFilaBracket club={vClub} nombre={cruce.visitanteNombre} ganador={ganadorId === cruce.visitanteId}
+          extra={cruce.jugado ? `${ptV}pts · ${gfV}gf` : null} />
+      </div>
+    );
+  }
+
+  let ganadorId = null;
+  if (cruce.jugado) {
+    if (cruce.hayPenales) {
+      ganadorId = (cruce.penalesLocal ?? 0) > (cruce.penalesVisitante ?? 0) ? cruce.localId : cruce.visitanteId;
+    } else if (fase.idaYVuelta) {
+      const tL = (cruce.golesLocal ?? 0) + (cruce.golesLocalVuelta ?? 0);
+      const tV = (cruce.golesVisitante ?? 0) + (cruce.golesVisitanteVuelta ?? 0);
+      if (tL > tV) ganadorId = cruce.localId;
+      else if (tV > tL) ganadorId = cruce.visitanteId;
+    } else {
+      if ((cruce.golesLocal ?? 0) > (cruce.golesVisitante ?? 0)) ganadorId = cruce.localId;
+      else if ((cruce.golesVisitante ?? 0) > (cruce.golesLocal ?? 0)) ganadorId = cruce.visitanteId;
+    }
+  }
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #dcfce7", overflow: "hidden", boxShadow: sombra }}>
+      <ClubFilaBracket club={lClub} nombre={cruce.localNombre} ganador={ganadorId === cruce.localId} />
+      <div style={{ padding: "3px 10px", background: "#f9fafb", display: "flex", alignItems: "center", gap: 6 }}>
+        {cruce.jugado ? (
+          <>
+            {fase.idaYVuelta ? (
+              <span style={{ fontSize: 10, color: "#6b7280", flex: 1 }}>
+                {cruce.golesLocal ?? "—"}–{cruce.golesVisitante ?? "—"} · {cruce.golesLocalVuelta ?? "—"}–{cruce.golesVisitanteVuelta ?? "—"}
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#111827", flex: 1, textAlign: "center", letterSpacing: 1 }}>
+                {cruce.golesLocal} — {cruce.golesVisitante}
+              </span>
+            )}
+            {cruce.hayPenales && (
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#854d0e", background: "#fef9c3", border: "1px solid #fde047", padding: "1px 5px", borderRadius: 20, flexShrink: 0 }}>
+                Pen {cruce.penalesLocal}–{cruce.penalesVisitante}
+              </span>
+            )}
+          </>
+        ) : (
+          <span style={{ fontSize: 11, color: "#9ca3af", flex: 1, textAlign: "center" }}>Pendiente</span>
+        )}
+      </div>
+      <ClubFilaBracket club={vClub} nombre={cruce.visitanteNombre} ganador={ganadorId === cruce.visitanteId} />
+    </div>
+  );
+}
+
+function ClubFilaBracket({ club, nombre, ganador, extra }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", background: ganador ? "#f0fdf4" : "#fff" }}>
+      <Escudo club={club} size={18} />
+      <span style={{ fontSize: 11, fontWeight: ganador ? 700 : 400, color: ganador ? "#166534" : "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {club?.nombre || nombre}
+      </span>
+      {extra && <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>{extra}</span>}
+      {ganador && <span style={{ fontSize: 10, color: "#166534" }}>✓</span>}
+    </div>
+  );
+}
+
+// ── Fixture Copa Clubs: Grupo → Categoría → Fecha ────────────────────────────
+function TabFixtureCopaClub({ zonaRef, grupos, clubes, categorias, onVerPartido }) {
+  const [grupoSelId, setGrupoSelId] = useState(grupos[0]?.id || "");
+  const [catSelId,   setCatSelId]   = useState(categorias[0]?.docId || "");
+  const [partidos,   setPartidos]   = useState([]);
+  const [cargando,   setCargando]   = useState(false);
+  const [jornadaSel, setJornadaSel] = useState(null);
+
+  const selectArrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23166534' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`;
+  const selStyle = { width: "100%", background: "#fff", color: "#111827", border: "1.5px solid #dcfce7", borderRadius: 10, padding: "8px 36px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", backgroundImage: selectArrow, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" };
+
+  // Si los props llegan vacíos al montar (carga async), inicializar los selectores cuando lleguen
+  useEffect(() => {
+    if (!catSelId && categorias.length > 0) setCatSelId(categorias[0].docId);
+  }, [categorias]);
+
+  useEffect(() => {
+    if (!grupoSelId && grupos.length > 0) setGrupoSelId(grupos[0].id);
+  }, [grupos]);
+
+  useEffect(() => {
+    if (catSelId && grupoSelId) cargarPartidos();
+  }, [catSelId, grupoSelId]);
+
+  async function cargarPartidos() {
+    setCargando(true);
+    try {
+      const pCol = collection(doc(collection(zonaRef, "categorias"), catSelId), "partidos");
+      const snap = await getDocs(query(collection(doc(collection(zonaRef, "categorias"), catSelId), "partidos"), where("grupoId", "==", grupoSelId)));
+      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.jornada - b.jornada);
+      setPartidos(items);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  const jornadas = useMemo(() =>
+    [...new Set(partidos.filter(p => !p.esLibre).map(p => p.jornada))].filter(v => v != null).sort((a, b) => a - b),
+    [partidos]
+  );
+
+  useEffect(() => {
+    setJornadaSel(prev => (prev != null && jornadas.includes(prev)) ? prev : (jornadas[0] ?? null));
+  }, [jornadas]);
+
+  const grupo  = partidos.filter(p => p.jornada === jornadaSel && !p.esLibre);
+  const libres = partidos.filter(p => p.jornada === jornadaSel && p.esLibre);
+  const jugados = grupo.filter(p => p.jugado).length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {grupos.length > 1 && (
+        <select value={grupoSelId} onChange={e => { setGrupoSelId(e.target.value); setJornadaSel(null); }} style={selStyle}>
+          {grupos.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
+        </select>
+      )}
+      {categorias.length > 1 && (
+        <select value={catSelId} onChange={e => setCatSelId(e.target.value)} style={selStyle}>
+          {categorias.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+        </select>
+      )}
+      {cargando ? <Spinner /> : jornadas.length === 0
+        ? <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin partidos cargados</div>
+        : (
+          <>
+            <select value={jornadaSel ?? ""} onChange={e => setJornadaSel(Number(e.target.value))} style={selStyle}>
+              {jornadas.map(j => {
+                const gr = partidos.filter(p => p.jornada === j && !p.esLibre);
+                return <option key={j} value={j}>Fecha {j} · {gr.filter(p => p.jugado).length}/{gr.length} jugados</option>;
+              })}
+            </select>
+            {jornadaSel != null && (
+              <Card>
+                <div style={{ padding: "9px 14px", background: "#dcfce7", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>Fecha {jornadaSel}</span>
+                  <span style={{ fontSize: 11, color: "#166534", background: "#bbf7d0", padding: "2px 8px", borderRadius: 20 }}>{jugados}/{grupo.length} jugados</span>
+                </div>
+                {grupo.map(p => <PartidoLineal key={p.docId} partido={p} clubes={clubes} onClick={onVerPartido} />)}
+                {libres.map(p => {
+                  const club = clubes.find(c => c.docId === (p.localId || p.visitanteId));
+                  return (
+                    <div key={p.docId} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderTop: "1px solid #f0fdf4", gap: 8 }}>
+                      <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", overflow: "hidden", minWidth: 0 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#9ca3af", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{club?.nombre || "—"}</span>
+                        <Escudo club={club} size={22} />
+                      </div>
+                      <div style={{ flexShrink: 0, minWidth: 76, textAlign: "center" }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#854d0e", background: "#fef9c3", border: "1px solid #fde047", padding: "2px 10px", borderRadius: 20 }}>LIBRE</span>
+                      </div>
+                      <div style={{ flex: 1 }} />
+                    </div>
+                  );
+                })}
+              </Card>
+            )}
+          </>
+        )
+      }
+    </div>
+  );
+}
+
+// ── Tablas Copa Clubs: Categoría → Tabla por Grupo ────────────────────────────
+function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias }) {
+  const mostrarGeneral = zona.tablaGeneralActiva && zona.tablaGeneralVisible;
+  const opciones = [
+    ...categorias.map(c => ({ id: c.docId, tipo: "cat", label: c.nombre })),
+    ...(mostrarGeneral ? [{ id: "__general__", tipo: "general", label: "Tabla General" }] : []),
+  ];
+  const [selId,    setSelId]    = useState(opciones[0]?.id || "");
+  const [partidos, setPartidos] = useState([]);
+  const [cargando, setCargando] = useState(false);
+
+  const pV    = zona.puntosPorVictoria ?? 3;
+  const pVGen = zona.tablaGeneralPuntosVictoria ?? 3;
+
+  const selectArrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23166534' stroke-width='1.8' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`;
+  const selStyle = { width: "100%", background: "#fff", color: "#111827", border: "1.5px solid #dcfce7", borderRadius: 10, padding: "8px 36px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", outline: "none", appearance: "none", backgroundImage: selectArrow, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center" };
+
+  useEffect(() => { if (selId) cargarPartidos(); }, [selId]);
+
+  async function cargarPartidos() {
+    setCargando(true);
+    try {
+      if (selId === "__general__") {
+        const catIds = zona.tablaGeneralCategorias || [];
+        const results = await Promise.all(
+          catIds.map(catId =>
+            getDocs(collection(doc(collection(zonaRef, "categorias"), catId), "partidos"))
+              .then(snap => snap.docs.map(d => ({ docId: d.id, ...d.data() })))
+          )
+        );
+        setPartidos(results.flat());
+      } else {
+        const snap = await getDocs(collection(doc(collection(zonaRef, "categorias"), selId), "partidos"));
+        setPartidos(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
+      }
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  const pVActivo = selId === "__general__" ? pVGen : pV;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {opciones.length > 1 && (
+        <select value={selId} onChange={e => setSelId(e.target.value)} style={selStyle}>
+          {opciones.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      )}
+      {cargando ? <Spinner /> : grupos.map(grupo => {
+        const grupoClubs    = (grupo.clubes || []).map(id => clubes.find(c => c.docId === id)).filter(Boolean);
+        const grupoPartidos = partidos.filter(p => p.grupoId === grupo.id);
+        return (
+          <div key={grupo.id}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>{grupo.nombre}</div>
+            <TabPosiciones clubes={grupoClubs} partidos={grupoPartidos} sanciones={[]} pV={pVActivo} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Vista zona ────────────────────────────────────────────────────────────────
-const TABS = ["Posiciones", "Fixture", "Fair Play", "Goleadores", "Vallas", "Sancionados"];
+const TABS_LIGA      = ["Posiciones", "Fixture", "Fair Play", "Goleadores", "Vallas", "Sancionados"];
+const TABS_COPA      = ["Bracket", "Posiciones", "Fixture", "Goleadores", "Sancionados"];
+const TABS_COPA_CLUB = ["Fixture", "Tablas", "Play Off", "Sancionados"];
+const TABS_ELIM      = ["Bracket", "Sancionados"];
+const TABS_ELIM_CLUB = ["Play Off"];
 
 function VistaZona({ liga, temporada, competencia, zona, onBack }) {
-  const cfg = useContext(CfgCtx);
-  const [clubes,    setClubes]    = useState([]);
-  const [categorias, setCategorias] = useState([]);
-  const [catSel,    setCatSel]    = useState(null);
-  const [partidos,  setPartidos]  = useState([]);
-  const [sanciones, setSanciones] = useState([]);
-  const [cargando,  setCargando]  = useState(false);
-  const [tab,       setTab]       = useState("Posiciones");
-  const [partidoSel, setPartidoSel] = useState(null);
-  const [clubSel,   setClubSel]   = useState(null);
+  const cfg       = useContext(CfgCtx);
+  const esCopa     = zona.tipo !== "liga";
+  const esElim     = zona.tipo === "copa_cat" || zona.tipo === "elim_equipos";
+  const esCopaClub = zona.tipo === "copa_club";
+  const esElimClub = zona.tipo === "elim_club";
+  const [clubes,             setClubes]             = useState([]);
+  const [categorias,         setCategorias]         = useState([]);   // visibles, para Tablas/Posiciones
+  const [categoriasFixture,  setCategoriasFixture]  = useState([]);   // todas las participantes, para Fixture
+  const [catSel,             setCatSel]             = useState(null);
+  const [partidos,   setPartidos]   = useState([]);
+  const [sanciones,  setSanciones]  = useState([]);
+  const [cargando,   setCargando]   = useState(false);
+  const [tab,          setTab]          = useState(esElimClub ? "Play Off" : esCopaClub ? "Fixture" : esCopa ? "Bracket" : "Posiciones");
+  const [partidoSel,   setPartidoSel]   = useState(null);
+  const [clubSel,      setClubSel]      = useState(null);
+  const [goleadorSel,  setGoleadorSel]  = useState(null); // { nombre, clubId }
 
   const zonaRef = doc(db, "ligas", liga.docId, "temporadas", temporada.docId, "competencias", competencia.docId, "zonas", zona.docId);
   const compRef = doc(db, "ligas", liga.docId, "temporadas", temporada.docId, "competencias", competencia.docId);
@@ -632,32 +1214,41 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
         getDocs(collection(compRef, "categorias")),
       ]);
       const allClubes = cs.docs.map(d => ({ docId: d.id, ...d.data() }));
-      const partIds   = zona.clubesParticipantes;
-      setClubes(partIds?.length ? allClubes.filter(c => partIds.includes(c.docId)) : allClubes);
+      // Para copa_club mostrar todos los clubes que están en algún grupo
+      const grupos = zona.grupos || [];
+      if (esCopaClub) {
+        const gruposClubIds = new Set(grupos.flatMap(g => g.clubes || []));
+        setClubes(allClubes.filter(c => gruposClubIds.has(c.docId)));
+      } else {
+        const partIds = zona.clubesParticipantes;
+        setClubes(partIds?.length ? allClubes.filter(c => partIds.includes(c.docId)) : allClubes);
+      }
 
-      // Filtrar categorías por zona y aplicar visibilidad por zona
-      const allCats   = cats.docs.map(d => ({ docId: d.id, ...d.data() }));
-      const catPart   = zona.categoriasParticipantes;
-      const catVis    = zona.categoriasVisibilidad || {};
-      const catsZona  = catPart?.length ? allCats.filter(c => catPart.includes(c.docId)) : allCats;
-      const catsData  = sortCategorias(
-        catsZona.map(c => ({ ...c, visible: catPart?.length ? (catVis[c.docId] ?? c.visible) : c.visible }))
-      ).filter(c => c.visible);
-      setCategorias(catsData);
-      // Categorías primero; Tabla General solo si no hay categorías
-      if (catsData.length > 0) {
-        setCatSel(catsData[0].docId);
-      } else if (zona.tablaGeneralActiva && zona.tablaGeneralVisible) {
-        setCatSel("__general__");
-      } else if (zona.tablaAcumuladaActiva && zona.tablaAcumuladaVisible) {
-        setCatSel("__acumulada__");
+      const allCats  = cats.docs.map(d => ({ docId: d.id, ...d.data() }));
+      const catPart  = zona.categoriasParticipantes;
+      const catVis   = zona.categoriasVisibilidad || {};
+      const catsZona = catPart?.length ? allCats.filter(c => catPart.includes(c.docId)) : allCats;
+      const catsConVis = sortCategorias(catsZona.map(c => ({ ...c, visible: catVis[c.docId] ?? (c.visible ?? true) })));
+      const catsData   = catsConVis.filter(c => c.visible);
+      setCategoriasFixture(catsConVis); // todas las participantes (para Fixture copa_club)
+      setCategorias(catsData);          // solo visibles (para Tablas/Posiciones)
+
+      if (!esCopaClub && !esElimClub) {
+        if (catsData.length > 0) {
+          setCatSel(catsData[0].docId);
+        } else if (zona.tablaGeneralActiva && zona.tablaGeneralVisible) {
+          setCatSel("__general__");
+        } else if (zona.tablaAcumuladaActiva && zona.tablaAcumuladaVisible) {
+          setCatSel("__acumulada__");
+        }
       }
     }
     cargar();
   }, []);
 
+  // Carga de partidos (solo para no copa_club / no elim_club)
   useEffect(() => {
-    if (!catSel) return;
+    if (!catSel || esCopaClub || esElimClub) return;
     async function cargarPartidos() {
       setCargando(true);
       try {
@@ -710,18 +1301,28 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
     ...(mostrarAcumulada ? [{ id: "__acumulada__", label: "Tabla Acumulada" }] : []),
   ];
   const esResumen    = catSel === "__general__" || catSel === "__acumulada__";
-  const tabsVisibles = esResumen ? ["Posiciones"] : TABS;
+  const tabsBase     = esElimClub ? TABS_ELIM_CLUB
+    : esCopaClub ? TABS_COPA_CLUB.filter(t => t !== "Play Off" || zona.playoffPublicado)
+    : esElim ? TABS_ELIM : esCopa ? TABS_COPA : TABS_LIGA;
+  const tabsVisibles = (!esCopaClub && !esElimClub && esResumen) ? ["Posiciones"] : tabsBase;
   const pV = catSel === "__general__" ? (zona.tablaGeneralPuntosVictoria ?? 3) : (zona.puntosPorVictoria ?? 3);
 
   if (partidoSel) return <VistaPartido partido={partidoSel} clubes={clubes} onBack={() => setPartidoSel(null)} />;
-
+  if (goleadorSel) {
+    return (
+      <VistaGoleadorPerfil
+        nombre={goleadorSel.nombre} clubId={goleadorSel.clubId}
+        partidos={partidos} clubes={clubes} ligaId={liga.docId}
+        onBack={() => setGoleadorSel(null)}
+      />
+    );
+  }
   if (clubSel) {
     return (
       <VistaEquipo
-        club={clubSel}
-        ligaId={liga.docId}
+        club={clubSel} ligaId={liga.docId}
         catId={esResumen ? null : catSel}
-        partidos={partidos}
+        partidos={partidos} clubes={clubes}
         onBack={() => setClubSel(null)}
       />
     );
@@ -738,7 +1339,8 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
               <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginTop: 1 }}>{competencia.nombre}</div>
             </div>
           </div>
-          {opciones.length > 1 && (
+          {/* Selector de categoría en header — solo para no copa_club / no elim_club */}
+          {!esCopaClub && !esElimClub && opciones.length > 1 && !esElim && (
             <div style={{ paddingBottom: 8 }}>
               <select
                 value={catSel || ""}
@@ -773,7 +1375,32 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
         </div>
       </div>
       <div style={{ padding: 14 }}>
-        {cargando ? <Spinner /> : (
+        {/* Copa por club: tabs manejados internamente */}
+        {esCopaClub && tab === "Fixture" && (
+          <TabFixtureCopaClub
+            zonaRef={zonaRef}
+            grupos={zona.grupos || []}
+            clubes={clubes}
+            categorias={categoriasFixture.length ? categoriasFixture : categorias}
+            onVerPartido={setPartidoSel}
+          />
+        )}
+        {esCopaClub && tab === "Tablas" && (
+          <TabTablasCopaClub
+            zonaRef={zonaRef}
+            zona={zona}
+            grupos={zona.grupos || []}
+            clubes={clubes}
+            categorias={categorias}
+          />
+        )}
+        {(esCopaClub || esElimClub) && tab === "Play Off" && (
+          <TabPlayOffCopaClub zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} />
+        )}
+        {esCopaClub && tab === "Sancionados" && <TabSancionados zonaRef={zonaRef} />}
+
+        {/* Todos los demás tipos */}
+        {!esCopaClub && !esElimClub && (cargando ? <Spinner /> : (
           <>
             {tab === "Posiciones" && (
               <TabPosiciones
@@ -781,14 +1408,372 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
                 onVerEquipo={catSel !== "__general__" ? setClubSel : undefined}
               />
             )}
+            {tab === "Bracket" && <TabBracket zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} />}
             {tab === "Fixture" && <TabFixture partidos={partidos} clubes={clubes} onVerPartido={setPartidoSel} />}
             {tab === "Fair Play"   && <TabFairPlay partidos={partidos} clubes={clubes} />}
-            {tab === "Goleadores"  && <TabGoleadores partidos={partidos} clubes={clubes} />}
+            {tab === "Goleadores"  && <TabGoleadores partidos={partidos} clubes={clubes} onVerJugador={setGoleadorSel} />}
             {tab === "Vallas"      && <TabVallas partidos={partidos} clubes={clubes} />}
             {tab === "Sancionados" && <TabSancionados zonaRef={zonaRef} />}
           </>
-        )}
+        ))}
       </div>
+    </div>
+  );
+}
+
+// ── Play Off Copa Club (público) ──────────────────────────────────────────────
+function TabPlayOffCopaClub({ zonaRef, clubes, categorias }) {
+  const [tieneClub, setTieneClub]       = useState(false);
+  const [catIds, setCatIds]             = useState([]);
+  const [vistaActiva, setVistaActiva]   = useState(null); // "club" | "categoria"
+  const [catSelId, setCatSelId]         = useState("");
+  const [verificado, setVerificado]     = useState(false);
+
+  useEffect(() => {
+    // Re-verificar cuando cambia la lista de categorías (el primer render puede
+    // ocurrir con categorias=[] si la pestaña Play Off es la inicial, como en elim_club)
+    setVerificado(false);
+    let cancelado = false;
+
+    async function verificar() {
+      // Verificar si hay copas por club publicadas
+      let hayClub = false;
+      try {
+        const copasClubSnap = await getDocs(collection(zonaRef, "playoffCopas"));
+        for (const copaDoc of copasClubSnap.docs) {
+          const ramasSnap = await getDocs(collection(copaDoc.ref, "ramas"));
+          if (ramasSnap.docs.some(r => r.data().publicada)) { hayClub = true; break; }
+        }
+      } catch (_) {}
+
+      // Verificar qué categorías tienen al menos una rama publicada.
+      // Se itera sobre las categorías conocidas (no se consulta la colección playoffCategorias
+      // porque sus documentos son implícitos en Firestore y getDocs los omite).
+      const ids = [];
+      await Promise.all(categorias.map(async cat => {
+        try {
+          const copasRef  = collection(doc(collection(zonaRef, "playoffCategorias"), cat.docId), "copas");
+          const copasSnap = await getDocs(copasRef);
+          for (const copaDoc of copasSnap.docs) {
+            const ramasSnap = await getDocs(collection(copaDoc.ref, "ramas"));
+            if (ramasSnap.docs.some(r => r.data().publicada)) { ids.push(cat.docId); break; }
+          }
+        } catch (_) {}
+      }));
+
+      if (cancelado) return;
+      setTieneClub(hayClub);
+      setCatIds(ids);
+      if (ids.length > 0) setCatSelId(prev => prev || ids[0]);
+      // Vista activa por defecto: club primero, si no la primera categoría
+      setVistaActiva(prev => {
+        if (prev) return prev;
+        if (hayClub) return "club";
+        if (ids.length > 0) return "categoria";
+        return null;
+      });
+      setVerificado(true);
+    }
+    verificar();
+    return () => { cancelado = true; };
+  }, [categorias]);
+
+  function nombreCat(id) {
+    return categorias.find(c => c.docId === id)?.nombre || id;
+  }
+
+  if (!verificado) return <Spinner />;
+
+  const tieneCategoria = catIds.length > 0;
+
+  if (!tieneClub && !tieneCategoria) {
+    return <div style={{ padding: 24, textAlign: "center", color: "#9ca3af", fontSize: 14 }}>Sin play off publicado aún</div>;
+  }
+
+  const btnBase = { flex: 1, padding: "13px 0", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 700, fontSize: 15, transition: "background 0.15s, color 0.15s" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Botones de navegación — solo los que tienen contenido */}
+      {(tieneClub || tieneCategoria) && (
+        <div style={{ display: "flex", gap: 10 }}>
+          {tieneClub && (
+            <button onClick={() => setVistaActiva("club")}
+              style={{ ...btnBase,
+                background: vistaActiva === "club" ? "#1a3a2a" : "#f0fdf4",
+                color:      vistaActiva === "club" ? "#4ade80" : "#374151",
+                boxShadow:  vistaActiva === "club" ? "0 2px 8px rgba(26,58,42,0.18)" : "none" }}>
+              Club
+            </button>
+          )}
+          {tieneCategoria && (
+            <button onClick={() => setVistaActiva("categoria")}
+              style={{ ...btnBase,
+                background: vistaActiva === "categoria" ? "#1a3a2a" : "#f0fdf4",
+                color:      vistaActiva === "categoria" ? "#4ade80" : "#374151",
+                boxShadow:  vistaActiva === "categoria" ? "0 2px 8px rgba(26,58,42,0.18)" : "none" }}>
+              Categoría
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Contenido: Por Club */}
+      {vistaActiva === "club" && (
+        <CopasPlayOffPublico key="club"
+          copasRef={collection(zonaRef, "playoffCopas")}
+          clubes={clubes} />
+      )}
+
+      {/* Contenido: Por Categoría */}
+      {vistaActiva === "categoria" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {catIds.length > 1 && (
+            <div style={{ display: "flex", gap: 0, overflowX: "auto" }}>
+              {catIds.map(id => (
+                <button key={id} onClick={() => setCatSelId(id)}
+                  style={{ flexShrink: 0, padding: "7px 14px", border: "none", background: "none", cursor: "pointer", fontSize: 13,
+                    fontWeight: catSelId === id ? 700 : 500,
+                    color: catSelId === id ? "#1a3a2a" : "#6b7280",
+                    borderBottom: catSelId === id ? "2px solid #4ade80" : "2px solid transparent" }}>
+                  {nombreCat(id)}
+                </button>
+              ))}
+            </div>
+          )}
+          {catSelId && (
+            <CopasPlayOffPublico key={catSelId}
+              copasRef={collection(doc(collection(zonaRef, "playoffCategorias"), catSelId), "copas")}
+              clubes={clubes} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CopasPlayOffPublico({ copasRef, clubes, hideEmpty, titulo }) {
+  const cfg = useContext(CfgCtx);
+  const [copas, setCopas]               = useState([]);
+  const [ramasPorCopa, setRamasPorCopa] = useState({});
+  const [cargando, setCargando]         = useState(true);
+  const [detalle, setDetalle]           = useState(null); // { partido, pierna, clubLocal, clubVisitante }
+
+  useEffect(() => {
+    async function cargar() {
+      try {
+        const copasSnap = await getDocs(copasRef);
+        const copasData = copasSnap.docs
+          .map(d => ({ docId: d.id, ...d.data() }))
+          .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+        setCopas(copasData);
+        const mapa = {};
+        await Promise.all(copasData.map(async copa => {
+          const copaDocRef = doc(copasRef, copa.docId);
+          const ramasSnap  = await getDocs(collection(copaDocRef, "ramas"));
+          mapa[copa.docId] = ramasSnap.docs
+            .map(d => ({ docId: d.id, ...d.data() }))
+            .filter(r => r.publicada)
+            .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+        }));
+        setRamasPorCopa(mapa);
+      } catch (_) { /* colección vacía */ }
+      setCargando(false);
+    }
+    cargar();
+  }, []);
+
+  if (cargando) return <Spinner />;
+
+  const copasConRamas = copas.filter(c => (ramasPorCopa[c.docId] || []).length > 0);
+  if (copasConRamas.length === 0) {
+    if (hideEmpty) return null;
+    return <div style={{ padding: 24, textAlign: "center", color: "#9ca3af", fontSize: 14 }}>Sin play off publicado aún</div>;
+  }
+
+  return (
+    <>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {titulo && <div style={{ fontWeight: 700, fontSize: 14, color: "#374151" }}>{titulo}</div>}
+      {copasConRamas.map(copa => (
+        <div key={copa.docId}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: cfg.color, marginBottom: 10 }}>
+            🏆 {copa.nombre}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {(ramasPorCopa[copa.docId] || []).map(rama => (
+              <Card key={rama.docId}>
+                <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "#374151", marginBottom: 2 }}>{rama.nombre}</div>
+                  {(rama.partidos || []).map(p => {
+                    const lc = clubes.find(c => c.docId === p.localId);
+                    const vc = clubes.find(c => c.docId === p.visitanteId);
+                    const onDetalle = (pierna, cL, cV) => setDetalle({ partido: p, pierna, clubLocal: cL, clubVisitante: cV });
+                    if (p.idaVuelta) {
+                      return (
+                        <div key={p.id} style={{ border: "1px solid #f0fdf4", borderRadius: 8, overflow: "hidden" }}>
+                          <PartidoPlayOffPublico partido={p} clubLocal={lc} clubVisitante={vc} pierna="ida" sinBorde
+                            onDetalle={p.jugado ? () => onDetalle("ida", lc, vc) : undefined} />
+                          <div style={{ height: 1, background: "#f0fdf4" }} />
+                          <PartidoPlayOffPublico partido={p} clubLocal={vc} clubVisitante={lc} pierna="vuelta" sinBorde
+                            onDetalle={p.jugadoVuelta ? () => onDetalle("vuelta", vc, lc) : undefined} />
+                        </div>
+                      );
+                    }
+                    return (
+                      <PartidoPlayOffPublico key={p.id} partido={p} clubLocal={lc} clubVisitante={vc} pierna="ida"
+                        onDetalle={p.jugado ? () => onDetalle("ida", lc, vc) : undefined} />
+                    );
+                  })}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+    {detalle && (
+      <DetallePartidoClubModal
+        partido={detalle.partido} pierna={detalle.pierna}
+        clubLocal={detalle.clubLocal} clubVisitante={detalle.clubVisitante}
+        onCerrar={() => setDetalle(null)}
+      />
+    )}
+    </>
+  );
+}
+
+function DetallePartidoClubModal({ partido, pierna, clubLocal, clubVisitante, onCerrar }) {
+  const catRes   = pierna === "ida" ? partido.catResultados : partido.catResultadosVuelta;
+  const nomLocal = clubLocal?.nombre  || partido.localNombre;
+  const nomVis   = clubVisitante?.nombre || partido.visitanteNombre;
+  const entries  = catRes
+    ? Object.entries(catRes).sort(([, a], [, b]) => (a.nombre || "").localeCompare(b.nombre || ""))
+    : [];
+
+  // Modo categoría: el partido tiene goles directos (no catResultados)
+  const gL  = pierna === "ida" ? partido.golesLocal        : partido.golesLocalVuelta;
+  const gV  = pierna === "ida" ? partido.golesVisitante    : partido.golesVisitanteVuelta;
+  const pen = pierna === "ida" ? partido.tienePenales      : partido.tienePenalesVuelta;
+  const pL  = pierna === "ida" ? partido.penalesLocal      : partido.penalesLocalVuelta;
+  const pV  = pierna === "ida" ? partido.penalesVisitante  : partido.penalesVisitanteVuelta;
+  const esModoCat = entries.length === 0 && gL != null;
+
+  return (
+    <div onClick={onCerrar} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "80vh", overflow: "auto", paddingBottom: 24 }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px 10px", borderBottom: "1px solid #f3f4f6" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a3a2a", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "42%" }}>{nomLocal}</span>
+              <span style={{ color: "#9ca3af", fontWeight: 400, flexShrink: 0 }}>vs</span>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "42%" }}>{nomVis}</span>
+            </div>
+            {partido.idaVuelta && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{pierna === "ida" ? "Ida" : "Vuelta"}</div>}
+          </div>
+          <button onClick={onCerrar} style={{ background: "none", border: "none", fontSize: 18, color: "#9ca3af", cursor: "pointer", lineHeight: 1, flexShrink: 0 }}>✕</button>
+        </div>
+        {/* Contenido */}
+        <div style={{ padding: "0 16px" }}>
+          {esModoCat ? (
+            /* Resultado simple (modo categoría) */
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "20px 0" }}>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#374151", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nomLocal}</span>
+              <div style={{ textAlign: "center", flexShrink: 0 }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#111827", letterSpacing: 2 }}>{gL} - {gV}</div>
+                {pen && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>({pL}-{pV} pen)</div>}
+              </div>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#374151", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nomVis}</span>
+            </div>
+          ) : entries.length === 0 ? (
+            <div style={{ padding: "16px 0", color: "#9ca3af", fontSize: 13, textAlign: "center" }}>Sin resultados cargados</div>
+          ) : (
+            /* Resultados por categorías (modo club) */
+            entries.map(([catId, r]) => (
+              <div key={catId} style={{ display: "flex", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #f3f4f6" }}>
+                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#374151" }}>{r.nombre || catId}</div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: "#111827", minWidth: 22, textAlign: "right" }}>{r.golesLocal}</span>
+                    <span style={{ fontSize: 13, color: "#9ca3af" }}>-</span>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: "#111827", minWidth: 22 }}>{r.golesVisitante}</span>
+                  </div>
+                  {r.tienePenales && (
+                    <div style={{ fontSize: 11, color: "#6b7280" }}>pen {r.penalesLocal}-{r.penalesVisitante}</div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PartidoPlayOffPublico({ partido, clubLocal, clubVisitante, pierna, sinBorde, onDetalle }) {
+  const jugado   = pierna === "ida" ? partido.jugado : partido.jugadoVuelta;
+  const esModoClub = partido.ptsLocal != null || partido.ptsLocalVuelta != null;
+
+  const escudoLocal = pierna === "ida" ? clubLocal    : clubVisitante;
+  const escudoVis   = pierna === "ida" ? clubVisitante : clubLocal;
+  const nomLocal = pierna === "ida"
+    ? (clubLocal?.nombre    || partido.localNombre)
+    : (clubVisitante?.nombre || partido.visitanteNombre);
+  const nomVis = pierna === "ida"
+    ? (clubVisitante?.nombre || partido.visitanteNombre)
+    : (clubLocal?.nombre    || partido.localNombre);
+
+  let resultNode;
+  if (jugado && esModoClub) {
+    const ptsL   = pierna === "ida" ? partido.ptsLocal : partido.ptsLocalVuelta;
+    const ptsV   = pierna === "ida" ? partido.ptsVis   : partido.ptsVisVuelta;
+    const gfL    = pierna === "ida" ? partido.gfLocal  : partido.gfLocalVuelta;
+    const gfV    = pierna === "ida" ? partido.gfVis    : partido.gfVisVuelta;
+    const catRes = pierna === "ida" ? partido.catResultados : partido.catResultadosVuelta;
+    const penCats = catRes ? Object.values(catRes).filter(r => r.tienePenales) : [];
+    resultNode = (
+      <div style={{ minWidth: 68, textAlign: "center" }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>{ptsL ?? 0}pt - {ptsV ?? 0}pt</div>
+        <div style={{ fontSize: 10, color: "#9ca3af" }}>{gfL ?? 0}GF - {gfV ?? 0}GF</div>
+        {penCats.map((r, i) => (
+          <div key={i} style={{ fontSize: 9, color: "#6b7280" }}>Pen {r.penalesLocal}-{r.penalesVisitante}{r.nombre ? ` en ${r.nombre}` : ""}</div>
+        ))}
+      </div>
+    );
+  } else if (jugado) {
+    const gL  = pierna === "ida" ? partido.golesLocal       : partido.golesLocalVuelta;
+    const gV  = pierna === "ida" ? partido.golesVisitante   : partido.golesVisitanteVuelta;
+    const pen = pierna === "ida" ? partido.tienePenales     : partido.tienePenalesVuelta;
+    const pL  = pierna === "ida" ? partido.penalesLocal     : partido.penalesLocalVuelta;
+    const pV  = pierna === "ida" ? partido.penalesVisitante : partido.penalesVisitanteVuelta;
+    resultNode = (
+      <div style={{ minWidth: 64, textAlign: "center" }}>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>{gL} - {gV}</div>
+        {pen && <div style={{ fontSize: 10, color: "#9ca3af" }}>({pL}-{pV} pen)</div>}
+      </div>
+    );
+  } else {
+    resultNode = <div style={{ fontSize: 12, color: "#9ca3af", minWidth: 64, textAlign: "center" }}>vs</div>;
+  }
+
+  return (
+    <div onClick={onDetalle || undefined}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
+        borderTop: sinBorde ? "none" : "1px solid #f0fdf4",
+        cursor: onDetalle ? "pointer" : "default" }}>
+      <Escudo club={escudoLocal} size={28} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nomLocal}</div>
+        {partido.idaVuelta && <div style={{ fontSize: 10, color: "#9ca3af" }}>{pierna === "ida" ? "Ida" : "Vuelta"}</div>}
+      </div>
+      {resultNode}
+      <div style={{ flex: 1, minWidth: 0, textAlign: "right" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nomVis}</div>
+      </div>
+      <Escudo club={escudoVis} size={28} />
+      {onDetalle && <span style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>›</span>}
     </div>
   );
 }
@@ -830,6 +1815,7 @@ function BannerInstalar() {
 export default function App() {
   const [cfg,          setCfg]          = useState(CFG_DEFAULT);
   const [pantalla,     setPantalla]     = useState("competencias");
+  const [temporadas,   setTemporadas]   = useState([]);   // activas (para selección)
   const [tempSel,      setTempSel]      = useState(null);
   const [competencias, setCompetencias] = useState([]);
   const [compSel,      setCompSel]      = useState(null);
@@ -841,7 +1827,6 @@ export default function App() {
   useEffect(() => {
     async function cargar() {
       try {
-        // Carga config de la liga y temporadas en paralelo
         const [ligaSnap, tempsSnap] = await Promise.all([
           getDoc(doc(db, "ligas", LIGA_ID)),
           getDocs(collection(db, "ligas", LIGA_ID, "temporadas")),
@@ -859,22 +1844,35 @@ export default function App() {
           });
         }
 
-        const temps = tempsSnap.docs
+        // Solo temporadas activas
+        const activas = tempsSnap.docs
           .map(d => ({ docId: d.id, ...d.data() }))
-          .filter(t => t.visible !== false)
-          .sort((a, b) => (b.anio || 0) - (a.anio || 0));
+          .filter(t => t.activa === true)
+          .sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999) || (b.anio || 0) - (a.anio || 0));
 
-        if (temps.length === 0) return;
-        const temp = temps[0];
-        setTempSel(temp);
+        if (activas.length === 0) {
+          // Sin temporadas activas — mostrar mensaje
+          setCargando(false);
+          return;
+        }
 
-        const compsSnap = await getDocs(
-          collection(db, "ligas", LIGA_ID, "temporadas", temp.docId, "competencias")
-        );
-        const comps = compsSnap.docs
-          .map(d => ({ docId: d.id, ...d.data() }))
-          .filter(c => c.visible !== false);
-        setCompetencias(comps);
+        if (activas.length === 1) {
+          // Una sola activa — ir directo a competencias
+          const temp = activas[0];
+          setTempSel(temp);
+          const compsSnap = await getDocs(
+            collection(db, "ligas", LIGA_ID, "temporadas", temp.docId, "competencias")
+          );
+          const comps = compsSnap.docs
+            .map(d => ({ docId: d.id, ...d.data() }))
+            .filter(c => c.visible !== false);
+          setCompetencias(comps);
+          setPantalla("competencias");
+        } else {
+          // Varias activas — mostrar pantalla de selección
+          setTemporadas(activas);
+          setPantalla("temporadas");
+        }
       } catch (e) {
         setError(e.message);
       } finally {
@@ -883,6 +1881,25 @@ export default function App() {
     }
     cargar();
   }, []);
+
+  async function seleccionarTemporada(temp) {
+    setCargando(true);
+    try {
+      setTempSel(temp);
+      const compsSnap = await getDocs(
+        collection(db, "ligas", LIGA_ID, "temporadas", temp.docId, "competencias")
+      );
+      const comps = compsSnap.docs
+        .map(d => ({ docId: d.id, ...d.data() }))
+        .filter(c => c.visible !== false);
+      setCompetencias(comps);
+      setPantalla("competencias");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCargando(false);
+    }
+  }
 
   async function cargarZonas(temp, comp) {
     const snap = await getDocs(
@@ -897,7 +1914,7 @@ export default function App() {
     setPantalla("zonas");
   }
 
-  // ── Spinner inicial hasta que Firebase responda ──
+  // ── Spinner inicial ──
   if (cargando) {
     return (
       <>
@@ -927,25 +1944,32 @@ export default function App() {
     );
   }
 
-  // ── Render listas ──
   const subtitulo =
     pantalla === "zonas"        ? compSel?.nombre :
-    tempSel                    ? `Temporada ${tempSel.anio}` :
+    pantalla === "competencias" && tempSel ? (tempSel.nombre || String(tempSel.anio)) :
     "";
 
   const backDesdeZonas = () => {
     setZonaSel(null);
     setZonas([]);
-    if (competencias.length <= 1) { setCompSel(null); setPantalla("competencias"); }
-    else { setCompSel(null); setPantalla("competencias"); }
+    setCompSel(null);
+    setPantalla("competencias");
+  };
+
+  const backDesdeCompetencias = () => {
+    setCompetencias([]);
+    setTempSel(null);
+    setPantalla("temporadas");
   };
 
   return (
     <CfgCtx.Provider value={cfg}>
       <div style={{ maxWidth: 480, width: "100%", margin: "0 auto", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
         <div style={{ background: cfg.color, padding: "26px 16px 22px" }}>
-          {pantalla === "zonas" && (
-            <button onClick={backDesdeZonas} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "#bbf7d0", borderRadius: 10, padding: "5px 11px", cursor: "pointer", fontSize: 14, marginBottom: 10, display: "block" }}>←</button>
+          {(pantalla === "zonas" || (pantalla === "competencias" && temporadas.length > 1)) && (
+            <button
+              onClick={pantalla === "zonas" ? backDesdeZonas : backDesdeCompetencias}
+              style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "#bbf7d0", borderRadius: 10, padding: "5px 11px", cursor: "pointer", fontSize: 14, marginBottom: 10, display: "block" }}>←</button>
           )}
           <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: 0 }}>{cfg.nombre}</h1>
           <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, margin: "4px 0 0" }}>{subtitulo}</p>
@@ -956,8 +1980,33 @@ export default function App() {
 
           {error && <div style={{ textAlign: "center", padding: 24, color: "#dc2626", fontSize: 13 }}>{error}</div>}
 
+          {/* Sin temporadas activas */}
+          {pantalla === "competencias" && !tempSel && !error && (
+            <div style={{ textAlign: "center", padding: 32, color: "#9ca3af", fontSize: 13 }}>
+              No hay temporadas activas en este momento.
+            </div>
+          )}
+
+          {/* Selección de temporada (2+ activas) */}
+          {pantalla === "temporadas" && (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Seleccioná una temporada</div>
+              {temporadas.map(temp => (
+                <div key={temp.docId} onClick={() => seleccionarTemporada(temp)}
+                  style={{ background: "#fff", borderRadius: 14, padding: "16px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: cfg.suave, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📅</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>{temp.nombre || String(temp.anio)}</div>
+                    {temp.nombre && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{temp.anio}</div>}
+                  </div>
+                  <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
+                </div>
+              ))}
+            </>
+          )}
+
           {/* Competencias */}
-          {pantalla === "competencias" && (
+          {pantalla === "competencias" && tempSel && (
             competencias.length === 0
               ? <div style={{ textAlign: "center", padding: 32, color: "#9ca3af", fontSize: 13 }}>No hay competencias disponibles</div>
               : competencias.map(comp => (
@@ -971,7 +2020,7 @@ export default function App() {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{comp.nombre}</div>
-                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{tempSel?.anio}</div>
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{tempSel.nombre || String(tempSel.anio)}</div>
                     </div>
                     <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
                   </div>
@@ -979,22 +2028,25 @@ export default function App() {
           )}
 
           {/* Zonas */}
-          {pantalla === "zonas" && zonas.map(zona => (
-            <div key={zona.docId}
-              onClick={() => { if (!zona.publicado) return; setZonaSel(zona); setPantalla("zona"); }}
-              style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: zona.publicado ? "pointer" : "default", opacity: zona.publicado ? 1 : 0.6 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{zona.nombre}</div>
-                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-                  {zona.publicado ? compSel?.nombre : "Próximamente"}
+          {pantalla === "zonas" && zonas.map(zona => {
+            const estaPublicada = zona.tipo === "elim_club" ? !!zona.playoffPublicado : !!zona.publicado;
+            return (
+              <div key={zona.docId}
+                onClick={() => { if (!estaPublicada) return; setZonaSel(zona); setPantalla("zona"); }}
+                style={{ background: "#fff", borderRadius: 14, padding: "13px 14px", border: "1px solid #dcfce7", boxShadow: sombra, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: estaPublicada ? "pointer" : "default", opacity: estaPublicada ? 1 : 0.6 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{zona.nombre}</div>
+                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                    {estaPublicada ? compSel?.nombre : "Próximamente"}
+                  </div>
                 </div>
+                {estaPublicada
+                  ? <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
+                  : <span style={{ fontSize: 11, color: "#9ca3af", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20 }}>Próximamente</span>
+                }
               </div>
-              {zona.publicado
-                ? <span style={{ fontSize: 16, color: "#d1d5db" }}>›</span>
-                : <span style={{ fontSize: 11, color: "#9ca3af", background: "#f3f4f6", padding: "3px 8px", borderRadius: 20 }}>Próximamente</span>
-              }
-            </div>
-          ))}
+            );
+          })}
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } } .tabs-scroll::-webkit-scrollbar { display: none; }`}</style>
       </div>

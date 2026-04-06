@@ -10,7 +10,9 @@
       "Bash(cd:*)",
       "Bash(node scripts/generate-icons.js)",
       "mcp__ide__getDiagnostics",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)"
     ]
   }
 }

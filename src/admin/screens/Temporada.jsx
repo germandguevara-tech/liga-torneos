@@ -130,7 +130,7 @@ export default function Temporada({ liga, temporada, onBack, onSeleccionarCompet
   return (
     <div style={{ minHeight: "100vh", background: "#f0fdf4", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       <HeaderAdmin
-        titulo={String(temporada.anio)}
+        titulo={temporada.nombre || String(temporada.anio)}
         subtitulo={liga.nombre + " · Competencias"}
         onBack={onBack}
         accionLabel="+ Competencia"

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "../../firebase";
 import { HeaderAdmin, Card, Modal, ConfirmModal, Switch, BtnPrimary, Campo, InputAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
 
@@ -7,12 +7,15 @@ const ANIO_ACTUAL = new Date().getFullYear();
 
 export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
   const [temporadas, setTemporadas] = useState([]);
-  const [cargando, setCargando] = useState(true);
-  const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ anio: ANIO_ACTUAL.toString() });
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState("");
+  const [cargando,   setCargando]   = useState(true);
+  const [modal,      setModal]      = useState(false);
+  const [form,       setForm]       = useState({ anio: ANIO_ACTUAL.toString(), nombre: "" });
+  const [guardando,  setGuardando]  = useState(false);
+  const [error,      setError]      = useState("");
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [editModal,  setEditModal]  = useState(null);
+  const [editNombre, setEditNombre] = useState("");
+  const [editError,  setEditError]  = useState("");
 
   const ligaRef = doc(db, "ligas", liga.docId);
   const tempCol = collection(ligaRef, "temporadas");
@@ -23,10 +26,9 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
     try {
       const snap = await getDocs(tempCol);
       const items = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
-      items.sort((a, b) => (b.anio || 0) - (a.anio || 0));
+      items.sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999) || (b.anio || 0) - (a.anio || 0));
       setTemporadas(items);
     } catch (e) {
-      console.error("Error cargando temporadas:", e);
       setError("Error al cargar temporadas: " + e.message);
     } finally {
       setCargando(false);
@@ -35,14 +37,25 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
 
   useEffect(() => { cargar(); }, []);
 
+  function nombreDisplay(t) {
+    return t.nombre || String(t.anio);
+  }
+
+  function validarNombreDuplicado(nombre, excludeId = null) {
+    const n = nombre.toLowerCase();
+    return temporadas.some(t => t.docId !== excludeId && nombreDisplay(t).toLowerCase() === n);
+  }
+
   async function crear() {
     const anio = parseInt(form.anio);
     if (!anio || anio < 2000 || anio > 2100) { setError("Ingresá un año válido"); return; }
+    const nombre = form.nombre.trim() || String(anio);
+    if (validarNombreDuplicado(nombre)) { setError("Ya existe una temporada con ese nombre"); return; }
     setGuardando(true);
     try {
-      await addDoc(tempCol, { anio, activa: false, creadaEn: Date.now() });
+      await addDoc(tempCol, { anio, nombre, activa: false, creadaEn: Date.now(), orden: temporadas.length });
       setModal(false);
-      setForm({ anio: ANIO_ACTUAL.toString() });
+      setForm({ anio: ANIO_ACTUAL.toString(), nombre: "" });
       setError("");
       await cargar();
     } catch (e) {
@@ -62,12 +75,32 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
     await cargar();
   }
 
-  const activas = temporadas.filter(t => t.activa);
+  async function editarNombre() {
+    const nombre = editNombre.trim();
+    if (!nombre) { setEditError("El nombre es requerido"); return; }
+    if (validarNombreDuplicado(nombre, editModal.docId)) { setEditError("Ya existe una temporada con ese nombre"); return; }
+    await updateDoc(doc(tempCol, editModal.docId), { nombre });
+    setTemporadas(ts => ts.map(t => t.docId === editModal.docId ? { ...t, nombre } : t));
+    setEditModal(null);
+  }
+
+  async function reordenar(idx, dir) {
+    const t = idx + dir;
+    if (t < 0 || t >= temporadas.length) return;
+    const nuevas = [...temporadas];
+    [nuevas[idx], nuevas[t]] = [nuevas[t], nuevas[idx]];
+    setTemporadas(nuevas);
+    const batch = writeBatch(db);
+    nuevas.forEach((temp, i) => batch.update(doc(tempCol, temp.docId), { orden: i }));
+    await batch.commit();
+  }
+
+  const activas   = temporadas.filter(t =>  t.activa);
   const inactivas = temporadas.filter(t => !t.activa);
 
   return (
     <div style={{ minHeight: "100vh", background: "#f0fdf4", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      <HeaderAdmin titulo={liga.nombre} subtitulo="Temporadas" onBack={onBack} accionLabel="+ Temporada" onAccion={() => setModal(true)} />
+      <HeaderAdmin titulo={liga.nombre} subtitulo="Temporadas" onBack={onBack} accionLabel="+ Temporada" onAccion={() => { setModal(true); setError(""); }} />
       <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, maxWidth: 600, margin: "0 auto" }}>
         {error && !cargando && (
           <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 16px", color: "#dc2626", fontSize: 13 }}>
@@ -82,13 +115,41 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
             {activas.length > 0 && (
               <>
                 <SeccionLabel>Activas</SeccionLabel>
-                {activas.map(t => <TemporadaCard key={t.docId} temp={t} onSeleccionar={onSeleccionarTemporada} onToggle={toggleActiva} onEliminar={setPendingDelete} />)}
+                {activas.map(t => {
+                  const idx = temporadas.indexOf(t);
+                  return (
+                    <TemporadaCard
+                      key={t.docId}
+                      temp={t}
+                      onSeleccionar={onSeleccionarTemporada}
+                      onToggle={toggleActiva}
+                      onEliminar={setPendingDelete}
+                      onEditar={temp => { setEditModal(temp); setEditNombre(nombreDisplay(temp)); setEditError(""); }}
+                      onSubir={idx > 0 ? () => reordenar(idx, -1) : null}
+                      onBajar={idx < temporadas.length - 1 ? () => reordenar(idx, 1) : null}
+                    />
+                  );
+                })}
               </>
             )}
             {inactivas.length > 0 && (
               <>
                 <SeccionLabel>Inactivas</SeccionLabel>
-                {inactivas.map(t => <TemporadaCard key={t.docId} temp={t} onSeleccionar={onSeleccionarTemporada} onToggle={toggleActiva} onEliminar={setPendingDelete} />)}
+                {inactivas.map(t => {
+                  const idx = temporadas.indexOf(t);
+                  return (
+                    <TemporadaCard
+                      key={t.docId}
+                      temp={t}
+                      onSeleccionar={onSeleccionarTemporada}
+                      onToggle={toggleActiva}
+                      onEliminar={setPendingDelete}
+                      onEditar={temp => { setEditModal(temp); setEditNombre(nombreDisplay(temp)); setEditError(""); }}
+                      onSubir={idx > 0 ? () => reordenar(idx, -1) : null}
+                      onBajar={idx < temporadas.length - 1 ? () => reordenar(idx, 1) : null}
+                    />
+                  );
+                })}
               </>
             )}
           </>
@@ -96,18 +157,31 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
       </div>
 
       {modal && (
-        <Modal titulo="Nueva Temporada" onClose={() => { setModal(false); setError(""); setForm({ anio: ANIO_ACTUAL.toString() }); }}>
+        <Modal titulo="Nueva Temporada" onClose={() => { setModal(false); setError(""); setForm({ anio: ANIO_ACTUAL.toString(), nombre: "" }); }}>
           <Campo label="Año">
-            <InputAdmin type="number" placeholder={ANIO_ACTUAL} value={form.anio} onChange={e => setForm({ anio: e.target.value })} autoFocus />
+            <InputAdmin type="number" placeholder={ANIO_ACTUAL} value={form.anio} onChange={e => setForm(f => ({ ...f, anio: e.target.value }))} autoFocus />
+          </Campo>
+          <Campo label="Nombre (opcional, ej: Apertura 2025)">
+            <InputAdmin placeholder="Apertura 2025" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} onKeyDown={e => e.key === "Enter" && crear()} />
           </Campo>
           {error && <div style={{ color: "#dc2626", fontSize: 13 }}>{error}</div>}
           <BtnPrimary onClick={crear} disabled={guardando} fullWidth>{guardando ? "Creando..." : "Crear Temporada"}</BtnPrimary>
         </Modal>
       )}
 
+      {editModal && (
+        <Modal titulo="Editar Temporada" onClose={() => setEditModal(null)}>
+          <Campo label="Nombre">
+            <InputAdmin value={editNombre} onChange={e => { setEditNombre(e.target.value); setEditError(""); }} autoFocus onKeyDown={e => e.key === "Enter" && editarNombre()} />
+          </Campo>
+          {editError && <div style={{ color: "#dc2626", fontSize: 13 }}>{editError}</div>}
+          <BtnPrimary onClick={editarNombre} fullWidth>Guardar</BtnPrimary>
+        </Modal>
+      )}
+
       {pendingDelete && (
         <ConfirmModal
-          mensaje={`Eliminás la temporada ${pendingDelete.anio}.`}
+          mensaje={`Eliminás la temporada "${nombreDisplay(pendingDelete)}".`}
           onConfirmar={confirmarEliminar}
           onCancelar={() => setPendingDelete(null)}
         />
@@ -116,22 +190,31 @@ export default function Liga({ liga, onBack, onSeleccionarTemporada }) {
   );
 }
 
-function TemporadaCard({ temp, onSeleccionar, onToggle, onEliminar }) {
+function TemporadaCard({ temp, onSeleccionar, onToggle, onEliminar, onEditar, onSubir, onBajar }) {
+  const nombre = temp.nombre || String(temp.anio);
   return (
     <Card>
-      <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+        {/* Reorder */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+          <button onClick={e => { e.stopPropagation(); onSubir?.(); }} disabled={!onSubir}
+            style={{ background: "none", border: "none", cursor: onSubir ? "pointer" : "default", color: onSubir ? "#6b7280" : "#d1fae5", fontSize: 13, padding: "1px 4px", lineHeight: 1 }}>▲</button>
+          <button onClick={e => { e.stopPropagation(); onBajar?.(); }} disabled={!onBajar}
+            style={{ background: "none", border: "none", cursor: onBajar ? "pointer" : "default", color: onBajar ? "#6b7280" : "#d1fae5", fontSize: 13, padding: "1px 4px", lineHeight: 1 }}>▼</button>
+        </div>
+        {/* Name */}
         <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => onSeleccionar(temp)}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{temp.anio}</div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{nombre}</div>
+          {temp.nombre && <div style={{ fontSize: 11, color: "#9ca3af" }}>{temp.anio}</div>}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 11, color: temp.activa ? "#166534" : "#6b7280" }}>{temp.activa ? "Activa" : "Inactiva"}</span>
-          <Switch value={temp.activa} onChange={() => onToggle(temp)} />
-          <button
-            onClick={e => { e.stopPropagation(); onEliminar(temp); }}
-            style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: "4px 4px" }}
-          >🗑</button>
-          <span style={{ fontSize: 18, color: "#9ca3af", cursor: "pointer" }} onClick={() => onSeleccionar(temp)}>›</span>
-        </div>
+        {/* Controls */}
+        <span style={{ fontSize: 11, color: temp.activa ? "#166534" : "#6b7280" }}>{temp.activa ? "Activa" : "Inactiva"}</span>
+        <Switch value={temp.activa} onChange={() => onToggle(temp)} />
+        <button onClick={e => { e.stopPropagation(); onEditar(temp); }}
+          style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 15, padding: "4px 4px" }}>✏️</button>
+        <button onClick={e => { e.stopPropagation(); onEliminar(temp); }}
+          style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, padding: "4px 4px" }}>🗑</button>
+        <span style={{ fontSize: 18, color: "#9ca3af", cursor: "pointer" }} onClick={() => onSeleccionar(temp)}>›</span>
       </div>
     </Card>
   );

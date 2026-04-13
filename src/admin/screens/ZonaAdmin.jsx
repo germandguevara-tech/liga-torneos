@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, query, where } from "firebase/firestore";
+import { collection, getDocs, getDoc, addDoc, deleteDoc, doc, updateDoc, setDoc, writeBatch, query, where } from "firebase/firestore";
 import { db } from "../../firebase";
 import { HeaderAdmin, Card, Modal, ConfirmModal, Switch, BtnPrimary, Campo, InputAdmin, SelectAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
 import FixtureAdmin    from "./FixtureAdmin";
@@ -122,6 +122,21 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
     setGuardandoConfig(false);
   }
 
+  async function resetearFixture() {
+    // Borra todos los partidos de todas las categorías y despublica el fixture
+    const catsSnap = await getDocs(collection(zonaRef, "categorias"));
+    for (const catDoc of catsSnap.docs) {
+      const snap = await getDocs(collection(catDoc.ref, "partidos"));
+      for (let i = 0; i < snap.docs.length; i += 400) {
+        const batch = writeBatch(db);
+        snap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+    await updateDoc(zonaRef, { publicado: false, fixtureBase: [] });
+    setZonaPublicada(false);
+  }
+
   async function guardarParticipantes() {
     setGuardandoParticipantes(true);
     const updates = {
@@ -225,7 +240,9 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
             catParticipantes={catParticipantes} setCatParticipantes={setCatParticipantes}
             catVisibilidad={catVisibilidad} setCatVisibilidad={setCatVisibilidad}
             guardando={guardandoParticipantes} onGuardar={guardarParticipantes}
-            publicado={zona.publicado ?? false}
+            publicado={zonaPublicada}
+            zonaRef={zonaRef}
+            onResetFixture={resetearFixture}
           />
         )}
         {tab === "fixture" && config.tipo === "copa_club" && (
@@ -491,9 +508,41 @@ function TabConfig({ config, setConfig, tablaConf, setTablaConf, tablaAcumConf, 
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB PARTICIPANTES
 // ══════════════════════════════════════════════════════════════════════════════
-function TabParticipantes({ clubes, categorias, cargando, participantesIds, setParticipantesIds, catParticipantes, setCatParticipantes, catVisibilidad, setCatVisibilidad, guardando, onGuardar, publicado }) {
-  const [clubSel, setClubSel] = useState("");
-  const [catSel,  setCatSel]  = useState("");
+function TabParticipantes({ clubes, categorias, cargando, participantesIds, setParticipantesIds, catParticipantes, setCatParticipantes, catVisibilidad, setCatVisibilidad, guardando, onGuardar, publicado, zonaRef, onResetFixture }) {
+  const [clubSel,        setClubSel]        = useState("");
+  const [catSel,         setCatSel]         = useState("");
+  const [hayResultados,  setHayResultados]  = useState(null);
+  const [reseteando,     setReseteando]     = useState(false);
+
+  useEffect(() => {
+    if (publicado && zonaRef) {
+      verificarResultados();
+    }
+  }, [publicado]);
+
+  async function verificarResultados() {
+    try {
+      const catsSnap = await getDocs(collection(zonaRef, "categorias"));
+      for (const catDoc of catsSnap.docs) {
+        const pSnap = await getDocs(collection(catDoc.ref, "partidos"));
+        if (pSnap.docs.some(d => d.data().jugado === true)) {
+          setHayResultados(true);
+          return;
+        }
+      }
+      setHayResultados(false);
+    } catch { setHayResultados(false); }
+  }
+
+  async function guardarYResetear() {
+    setReseteando(true);
+    try {
+      await onGuardar();
+      await onResetFixture();
+    } finally {
+      setReseteando(false);
+    }
+  }
 
   if (cargando) return <Spinner />;
 
@@ -504,36 +553,108 @@ function TabParticipantes({ clubes, categorias, cargando, participantesIds, setP
     const catsMostrar = catParticipantes.length
       ? catParticipantes.map(id => categorias.find(c => c.docId === id)).filter(Boolean)
       : categorias;
+
+    // Fixture publicado con resultados cargados → solo visibilidad
+    if (hayResultados === true) {
+      return (
+        <>
+          <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 12, padding: "11px 16px", fontSize: 13, color: "#991b1b", fontWeight: 600 }}>
+            ⚠️ No se pueden eliminar equipos porque ya hay resultados cargados en el fixture.
+          </div>
+          <SeccionLabel>Clubes participantes</SeccionLabel>
+          {clubesMostrar.map(club => (
+            <Card key={club.docId}>
+              <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <LogoClub club={club} size={34} />
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
+              </div>
+            </Card>
+          ))}
+          <SeccionLabel>Categorías participantes</SeccionLabel>
+          {catsMostrar.map(cat => {
+            const visible = catVisibilidad[cat.docId] ?? (cat.visible ?? true);
+            return (
+              <Card key={cat.docId}>
+                <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
+                  <span style={{ fontSize: 11, color: visible ? "#166534" : "#6b7280" }}>{visible ? "Visible" : "Oculta"}</span>
+                  <Switch value={visible} onChange={() => setCatVisibilidad(prev => ({ ...prev, [cat.docId]: !visible }))} />
+                </div>
+              </Card>
+            );
+          })}
+          <BtnPrimary onClick={onGuardar} disabled={guardando} fullWidth>
+            {guardando ? "Guardando..." : "Guardar visibilidad"}
+          </BtnPrimary>
+        </>
+      );
+    }
+
+    // Fixture publicado sin resultados → permitir eliminar (con reset de fixture)
+    if (hayResultados === false) {
+      const clubesDisp = clubes.filter(c => !participantesIds.includes(c.docId));
+      const clubesAgreg = participantesIds.map(id => clubes.find(c => c.docId === id)).filter(Boolean);
+      return (
+        <>
+          <div style={{ background: "#fff7ed", border: "1.5px solid #fed7aa", borderRadius: 12, padding: "11px 16px", fontSize: 13, color: "#92400e", fontWeight: 600 }}>
+            ⚠️ El fixture está publicado pero sin resultados. Podés modificar participantes — al guardar el fixture se reseteará y tendrás que volver a configurarlo.
+          </div>
+          <SeccionLabel>Clubes que participan en esta zona</SeccionLabel>
+          <Card>
+            <div style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
+              <select
+                value={clubSel}
+                onChange={e => setClubSel(e.target.value)}
+                style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 10, padding: "9px 10px", fontSize: 13, color: clubSel ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}
+              >
+                <option value="">— Seleccioná un club —</option>
+                {clubesDisp.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+              </select>
+              <button
+                onClick={() => { if (!clubSel) return; setParticipantesIds(prev => [...prev, clubSel]); setClubSel(""); }}
+                disabled={!clubSel}
+                style={{ background: clubSel ? "#1a3a2a" : "#d1fae5", color: clubSel ? "#4ade80" : "#9ca3af", border: "none", borderRadius: 10, padding: "9px 16px", cursor: clubSel ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 700, flexShrink: 0 }}
+              >
+                Agregar
+              </button>
+            </div>
+          </Card>
+          {clubesAgreg.map(club => (
+            <Card key={club.docId}>
+              <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                <LogoClub club={club} size={34} />
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
+                <button onClick={() => setParticipantesIds(prev => prev.filter(x => x !== club.docId))} style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
+              </div>
+            </Card>
+          ))}
+          <SeccionLabel>Categorías participantes</SeccionLabel>
+          {catsMostrar.map(cat => {
+            const visible = catVisibilidad[cat.docId] ?? (cat.visible ?? true);
+            return (
+              <Card key={cat.docId}>
+                <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
+                  <span style={{ fontSize: 11, color: visible ? "#166534" : "#6b7280" }}>{visible ? "Visible" : "Oculta"}</span>
+                  <Switch value={visible} onChange={() => setCatVisibilidad(prev => ({ ...prev, [cat.docId]: !visible }))} />
+                </div>
+              </Card>
+            );
+          })}
+          <BtnPrimary onClick={guardarYResetear} disabled={reseteando} fullWidth>
+            {reseteando ? "Guardando y reseteando fixture..." : "Guardar y resetear fixture"}
+          </BtnPrimary>
+        </>
+      );
+    }
+
+    // Verificando resultados (hayResultados === null)
     return (
       <>
         <div style={{ background: "#fef3c7", border: "1.5px solid #fcd34d", borderRadius: 12, padding: "11px 16px", fontSize: 13, color: "#92400e", fontWeight: 600 }}>
-          🔒 Torneo publicado — clubes y categorías bloqueados. Solo podés cambiar la visibilidad.
+          🔒 Torneo publicado — verificando si hay resultados...
         </div>
-        <SeccionLabel>Clubes participantes</SeccionLabel>
-        {clubesMostrar.map(club => (
-          <Card key={club.docId}>
-            <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-              <LogoClub club={club} size={34} />
-              <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{club.nombre}</div>
-            </div>
-          </Card>
-        ))}
-        <SeccionLabel>Categorías participantes</SeccionLabel>
-        {catsMostrar.map(cat => {
-          const visible = catVisibilidad[cat.docId] ?? (cat.visible ?? true);
-          return (
-            <Card key={cat.docId}>
-              <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#111827" }}>{cat.nombre}</div>
-                <span style={{ fontSize: 11, color: visible ? "#166534" : "#6b7280" }}>{visible ? "Visible" : "Oculta"}</span>
-                <Switch value={visible} onChange={() => setCatVisibilidad(prev => ({ ...prev, [cat.docId]: !visible }))} />
-              </div>
-            </Card>
-          );
-        })}
-        <BtnPrimary onClick={onGuardar} disabled={guardando} fullWidth>
-          {guardando ? "Guardando..." : "Guardar visibilidad"}
-        </BtnPrimary>
+        <Spinner />
       </>
     );
   }
@@ -956,7 +1077,8 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias, tablaCon
         loc.pj++; vis.pj++;
         loc.gf += p.golesLocal; loc.gc += p.golesVisitante;
         vis.gf += p.golesVisitante; vis.gc += p.golesLocal;
-        if      (p.golesLocal > p.golesVisitante) { loc.g++; vis.p++; loc.pts += pVact; }
+        if (p.perdidoAmbos)                        { loc.p++; vis.p++; }
+        else if (p.golesLocal > p.golesVisitante) { loc.g++; vis.p++; loc.pts += pVact; }
         else if (p.golesLocal < p.golesVisitante) { vis.g++; loc.p++; vis.pts += pVact; }
         else                                       { loc.e++; vis.e++; loc.pts += pEact; vis.pts += pEact; }
       });
@@ -1101,7 +1223,8 @@ function TabTablas({ zonaRef, zona, grupos, clubes, categorias, tablaConf, setTa
         loc.pj++; vis.pj++;
         loc.gf += p.golesLocal; loc.gc += p.golesVisitante;
         vis.gf += p.golesVisitante; vis.gc += p.golesLocal;
-        if      (p.golesLocal > p.golesVisitante) { loc.g++; vis.p++; loc.pts += pV; }
+        if (p.perdidoAmbos)                        { loc.p++; vis.p++; }
+        else if (p.golesLocal > p.golesVisitante) { loc.g++; vis.p++; loc.pts += pV; }
         else if (p.golesLocal < p.golesVisitante) { vis.g++; loc.p++; vis.pts += pV; }
         else                                       { loc.e++; vis.e++; loc.pts += pE; vis.pts += pE; }
       });
@@ -1113,12 +1236,26 @@ function TabTablas({ zonaRef, zona, grupos, clubes, categorias, tablaConf, setTa
     const nuevas = typeof modalSancion === "number"
       ? sanciones.map((s, i) => i === modalSancion ? san : s)
       : [...sanciones, san];
-    await persistirSanciones(nuevas);
+
+    let afectaGeneralNuevas;
+    if (sel.tipo === "cat") {
+      // Recalcular tablaGeneralSanciones: quitar entradas previas de esta cat+club y agregar si afecta general
+      const generales = tablaConf.tablaGeneralSanciones || [];
+      // Si editando, determinar el clubId anterior
+      const clubIdAnterior = typeof modalSancion === "number" ? sanciones[modalSancion]?.clubId : null;
+      let sinActual = generales.filter(g => !(g.fromCatId === selId && (!clubIdAnterior || g.clubId === clubIdAnterior)));
+      if (san.afectaGeneral) {
+        sinActual = [...sinActual, { clubId: san.clubId, clubNombre: san.clubNombre, puntos: san.puntos, motivo: san.motivo, fromCatId: selId }];
+      }
+      afectaGeneralNuevas = sinActual;
+    }
+
+    await persistirSanciones(nuevas, afectaGeneralNuevas);
     setSanciones(nuevas);
     setModalSancion(null);
   }
 
-  async function persistirSanciones(nuevas) {
+  async function persistirSanciones(nuevas, afectaGeneralNuevas) {
     if (sel.tipo === "general") {
       setTablaConf(c => ({ ...c, tablaGeneralSanciones: nuevas }));
       await updateDoc(zonaRef, { tablaGeneralSanciones: nuevas });
@@ -1126,13 +1263,28 @@ function TabTablas({ zonaRef, zona, grupos, clubes, categorias, tablaConf, setTa
       setTablaAcumConf(c => ({ ...c, tablaAcumuladaSanciones: nuevas }));
       await updateDoc(zonaRef, { tablaAcumuladaSanciones: nuevas });
     } else {
-      await updateDoc(doc(collection(zonaRef, "categorias"), selId), { sanciones: nuevas });
+      // Usar setDoc con merge para que funcione aunque el documento no exista
+      await setDoc(doc(collection(zonaRef, "categorias"), selId), { sanciones: nuevas }, { merge: true });
+      // Si hay sanciones que afectan la tabla general, actualizar tablaGeneralSanciones
+      if (afectaGeneralNuevas !== undefined) {
+        setTablaConf(c => ({ ...c, tablaGeneralSanciones: afectaGeneralNuevas }));
+        await updateDoc(zonaRef, { tablaGeneralSanciones: afectaGeneralNuevas });
+      }
     }
   }
 
   async function eliminarSancion() {
+    const sancion = sanciones[pendingDelSancion];
     const nuevas = sanciones.filter((_, i) => i !== pendingDelSancion);
-    await persistirSanciones(nuevas);
+
+    let afectaGeneralNuevas;
+    if (sel.tipo === "cat" && sancion) {
+      // Quitar de tablaGeneralSanciones si estaba ahí
+      const generales = tablaConf.tablaGeneralSanciones || [];
+      afectaGeneralNuevas = generales.filter(g => !(g.fromCatId === selId && g.clubId === sancion.clubId));
+    }
+
+    await persistirSanciones(nuevas, afectaGeneralNuevas);
     setSanciones(nuevas);
     setPendingDelSancion(null);
   }
@@ -1192,6 +1344,7 @@ function TabTablas({ zonaRef, zona, grupos, clubes, categorias, tablaConf, setTa
           sancionInicial={typeof modalSancion === "number" ? sanciones[modalSancion] : undefined}
           onGuardar={guardarSancion}
           onClose={() => setModalSancion(null)}
+          showAfectaGeneral={sel?.tipo === "cat" && (tablaConf.tablaGeneralActiva ?? false)}
         />
       )}
       {pendingDelSancion !== null && (
@@ -1241,10 +1394,11 @@ function TablaPosicionesTablas({ tabla }) {
 }
 
 // ── Modal sanción ─────────────────────────────────────────────────────────────
-function SancionModal({ clubes, sancionInicial, onGuardar, onClose }) {
-  const [clubId, setClubId] = useState(sancionInicial?.clubId || clubes[0]?.docId || "");
-  const [puntos, setPuntos] = useState(sancionInicial ? String(sancionInicial.puntos) : "3");
-  const [motivo, setMotivo] = useState(sancionInicial?.motivo || "");
+function SancionModal({ clubes, sancionInicial, onGuardar, onClose, showAfectaGeneral }) {
+  const [clubId,        setClubId]        = useState(sancionInicial?.clubId || clubes[0]?.docId || "");
+  const [puntos,        setPuntos]        = useState(sancionInicial ? String(sancionInicial.puntos) : "3");
+  const [motivo,        setMotivo]        = useState(sancionInicial?.motivo || "");
+  const [afectaGeneral, setAfectaGeneral] = useState(sancionInicial?.afectaGeneral ?? false);
   const esEdicion = !!sancionInicial;
   return (
     <Modal titulo={esEdicion ? "Editar descuento" : "Descontar Puntos"} onClose={onClose}>
@@ -1259,8 +1413,19 @@ function SancionModal({ clubes, sancionInicial, onGuardar, onClose }) {
       <Campo label="Motivo (opcional)">
         <InputAdmin value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="W.O., infracción..." />
       </Campo>
+      {showAfectaGeneral && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
+          <Switch value={afectaGeneral} onChange={setAfectaGeneral} />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>Afecta tabla general</div>
+            <div style={{ fontSize: 11, color: "#6b7280" }}>
+              {afectaGeneral ? "El descuento también se refleja en la tabla general" : "Solo afecta la tabla de esta categoría"}
+            </div>
+          </div>
+        </div>
+      )}
       <BtnPrimary
-        onClick={() => onGuardar({ clubId, clubNombre: clubes.find(c => c.docId === clubId)?.nombre || "", puntos: Math.max(1, parseInt(puntos) || 1), motivo: motivo.trim() })}
+        onClick={() => onGuardar({ clubId, clubNombre: clubes.find(c => c.docId === clubId)?.nombre || "", puntos: Math.max(1, parseInt(puntos) || 1), motivo: motivo.trim(), afectaGeneral: showAfectaGeneral ? afectaGeneral : false })}
         fullWidth>
         {esEdicion ? "Guardar cambios" : "Aplicar sanción"}
       </BtnPrimary>

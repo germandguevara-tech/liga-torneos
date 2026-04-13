@@ -97,7 +97,8 @@ function calcularTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
       const propios = esLocal ? (par.golesLocal ?? 0) : (par.golesVisitante ?? 0);
       const ajenos  = esLocal ? (par.golesVisitante ?? 0) : (par.golesLocal ?? 0);
       gf += propios; gc += ajenos;
-      if (propios > ajenos) g++;
+      if (par.perdidoAmbos) p++;
+      else if (propios > ajenos) g++;
       else if (propios === ajenos) e++;
       else p++;
     });
@@ -1907,7 +1908,8 @@ export default function App() {
           );
           const comps = compsSnap.docs
             .map(d => ({ docId: d.id, ...d.data() }))
-            .filter(c => c.visible !== false);
+            .filter(c => c.visible !== false)
+            .sort((a, b) => (a.orden ?? a.creadaEn ?? a.creadoEn ?? 0) - (b.orden ?? b.creadaEn ?? b.creadoEn ?? 0));
           setCompetencias(comps);
           setPantalla("competencias");
         } else {
@@ -1933,7 +1935,8 @@ export default function App() {
       );
       const comps = compsSnap.docs
         .map(d => ({ docId: d.id, ...d.data() }))
-        .filter(c => c.visible !== false);
+        .filter(c => c.visible !== false)
+        .sort((a, b) => (a.orden ?? a.creadaEn ?? a.creadoEn ?? 0) - (b.orden ?? b.creadaEn ?? b.creadoEn ?? 0));
       setCompetencias(comps);
       setPantalla("competencias");
     } catch (e) {
@@ -1947,7 +1950,7 @@ export default function App() {
     const snap = await getDocs(
       collection(db, "ligas", LIGA_ID, "temporadas", temp.docId, "competencias", comp.docId, "zonas")
     );
-    setZonas(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
+    setZonas(snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => (a.orden ?? a.creadoEn ?? 0) - (b.orden ?? b.creadoEn ?? 0)));
   }
 
   async function seleccionarComp(comp) {

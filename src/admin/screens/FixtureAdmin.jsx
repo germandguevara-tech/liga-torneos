@@ -117,7 +117,7 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
           visitanteNombre: vClub?.nombre ?? "",
         };
       })
-    );
+    ).map((p, idx) => ({ ...p, orden: idx }));
   }
 
   async function publicar() {
@@ -331,7 +331,7 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId, onEditarFi
   async function cargarPartidos(catId) {
     setCargando(true);
     const snap = await getDocs(collection(doc(collection(zonaRef, "categorias"), catId), "partidos"));
-    const items = snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.jornada - b.jornada);
+    const items = snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.jornada - b.jornada || (a.orden ?? 0) - (b.orden ?? 0));
     setPartidos(items);
     setCargando(false);
   }
@@ -458,19 +458,21 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId, onEditarFi
 
 // ── Fila partido inline ───────────────────────────────────────────────────────
 export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
-  const [jugado,    setJugado]    = useState(partido.jugado ?? false);
-  const [gl,        setGl]        = useState(partido.golesLocal     != null ? String(partido.golesLocal)     : "");
-  const [gv,        setGv]        = useState(partido.golesVisitante != null ? String(partido.golesVisitante) : "");
-  const [guardando, setGuardando] = useState(false);
-  const [error,     setError]     = useState("");
+  const [jugado,       setJugado]       = useState(partido.jugado ?? false);
+  const [gl,           setGl]           = useState(partido.golesLocal     != null ? String(partido.golesLocal)     : "");
+  const [gv,           setGv]           = useState(partido.golesVisitante != null ? String(partido.golesVisitante) : "");
+  const [perdidoAmbos, setPerdidoAmbos] = useState(partido.perdidoAmbos ?? false);
+  const [guardando,    setGuardando]    = useState(false);
+  const [error,        setError]        = useState("");
 
   const lClub = clubes.find(c => c.docId === partido.localId);
   const vClub = clubes.find(c => c.docId === partido.visitanteId);
 
-  const origJugado = partido.jugado ?? false;
-  const origGl = partido.golesLocal     != null ? String(partido.golesLocal)     : "";
-  const origGv = partido.golesVisitante != null ? String(partido.golesVisitante) : "";
-  const isDirty = jugado !== origJugado || (jugado && (gl !== origGl || gv !== origGv));
+  const origJugado       = partido.jugado ?? false;
+  const origGl           = partido.golesLocal     != null ? String(partido.golesLocal)     : "";
+  const origGv           = partido.golesVisitante != null ? String(partido.golesVisitante) : "";
+  const origPerdidoAmbos = partido.perdidoAmbos ?? false;
+  const isDirty = jugado !== origJugado || (jugado && (gl !== origGl || gv !== origGv || perdidoAmbos !== origPerdidoAmbos));
 
   const totalResultado = (partido.golesLocal ?? 0) + (partido.golesVisitante ?? 0);
   const sinGoles = partido.jugado && (partido.goles || []).reduce((s, g) => s + (g.cantidad || 1), 0) !== totalResultado;
@@ -487,6 +489,7 @@ export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
         jugado,
         golesLocal:     jugado && gl !== "" ? parseInt(gl)     : null,
         golesVisitante: jugado && gv !== "" ? parseInt(gv)     : null,
+        perdidoAmbos:   jugado ? perdidoAmbos : false,
         goles:    jugado ? (partido.goles    || []) : [],
         tarjetas: jugado ? (partido.tarjetas || []) : [],
       });
@@ -522,11 +525,21 @@ export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
             </span>
           </div>
         </div>
+        {/* Partido perdido para ambos */}
+        {jugado && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, background: perdidoAmbos ? "#fef2f2" : "#f9fafb", borderRadius: 8, padding: "6px 10px", border: `1px solid ${perdidoAmbos ? "#fecaca" : "#e5e7eb"}` }}>
+            <Switch value={perdidoAmbos} onChange={v => { setPerdidoAmbos(v); setError(""); }} />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: perdidoAmbos ? "#dc2626" : "#374151" }}>Partido perdido para ambos</div>
+              {perdidoAmbos && <div style={{ fontSize: 10, color: "#6b7280" }}>Ambos equipos pierden (0 puntos)</div>}
+            </div>
+          </div>
+        )}
         {/* Error */}
         {error && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{error}</div>}
         {/* Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-          <Switch value={jugado} onChange={v => { setJugado(v); if (!v) { setGl(""); setGv(""); } setError(""); }} />
+          <Switch value={jugado} onChange={v => { setJugado(v); if (!v) { setGl(""); setGv(""); setPerdidoAmbos(false); } setError(""); }} />
           <span style={{ fontSize: 11, color: "#6b7280", flex: 1 }}>Jugado</span>
           {sinGoles && (
             <span title="Sin goles/tarjetas cargados" style={{ fontSize: 14 }}>⚠️</span>

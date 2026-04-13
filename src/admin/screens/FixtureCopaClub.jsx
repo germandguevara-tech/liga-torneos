@@ -138,7 +138,7 @@ function PrePublicacion({ zonaRef, ligaId, grupos, clubes, categorias, gruposFix
           localNombre: lClub?.nombre ?? "", visitanteNombre: vClub?.nombre ?? "",
         };
       })
-    );
+    ).map((p, idx) => ({ ...p, orden: idx }));
 
     for (const cat of categorias) {
       const pCol = collection(doc(collection(zonaRef, "categorias"), cat.docId), "partidos");
@@ -441,7 +441,7 @@ function FixtureGrupoView({ zonaRef, grupoId, clubes, categorias, ligaId }) {
     try {
       const pCol = collection(doc(collection(zonaRef, "categorias"), catId), "partidos");
       const snap = await getDocs(query(pCol, where("grupoId", "==", grupoId)));
-      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.jornada - b.jornada);
+      const items = snap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.jornada - b.jornada || (a.orden ?? 0) - (b.orden ?? 0));
       setPartidos(items);
     } finally {
       setCargando(false);

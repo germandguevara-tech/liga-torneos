@@ -1,6 +1,6 @@
-import { StrictMode, Component } from 'react'
+import { StrictMode, Component, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import './index.css'
 import App from './App.jsx'
 import LoginAdmin from './admin/LoginAdmin.jsx'
@@ -29,10 +29,21 @@ class ErrorBoundary extends Component {
   }
 }
 
+function RouteTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    if (typeof window.gtag === 'function') {
+      window.gtag('config', 'G-R36HN8Q2YV', { page_path: location.pathname });
+    }
+  }, [location]);
+  return null;
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
       <BrowserRouter>
+        <RouteTracker />
         <Routes>
           <Route path="/" element={<App />} />
           <Route path="/admin/login" element={<LoginAdmin />} />

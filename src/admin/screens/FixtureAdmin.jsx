@@ -527,12 +527,13 @@ export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
         </div>
         {/* Partido perdido para ambos */}
         {jugado && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
-            <Switch value={perdidoAmbos} onChange={v => { setPerdidoAmbos(v); setError(""); }} />
-            <span style={{ fontSize: 10, color: perdidoAmbos ? "#dc2626" : "#9ca3af", fontWeight: perdidoAmbos ? 700 : 400 }}>
-              Perdido para ambos{perdidoAmbos ? " (0 pts c/u)" : ""}
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 4, cursor: "pointer" }}>
+            <input type="checkbox" checked={perdidoAmbos} onChange={e => { setPerdidoAmbos(e.target.checked); setError(""); }}
+              style={{ width: 11, height: 11, accentColor: "#dc2626", cursor: "pointer" }} />
+            <span style={{ fontSize: 10, color: perdidoAmbos ? "#dc2626" : "#9ca3af" }}>
+              Perdido para ambos
             </span>
-          </div>
+          </label>
         )}
         {/* Error */}
         {error && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{error}</div>}

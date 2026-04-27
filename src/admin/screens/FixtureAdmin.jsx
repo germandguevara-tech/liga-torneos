@@ -478,7 +478,7 @@ export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
   const sinGoles = partido.jugado && (partido.goles || []).reduce((s, g) => s + (g.cantidad || 1), 0) !== totalResultado;
 
   async function guardar() {
-    if (jugado && (gl === "" || gv === "")) {
+    if (jugado && !perdidoAmbos && (gl === "" || gv === "")) {
       setError("Ingresá el resultado completo antes de guardar.");
       return;
     }
@@ -487,8 +487,8 @@ export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
     try {
       await onGuardar({
         jugado,
-        golesLocal:     jugado && gl !== "" ? parseInt(gl)     : null,
-        golesVisitante: jugado && gv !== "" ? parseInt(gv)     : null,
+        golesLocal:     jugado ? (perdidoAmbos ? 0 : parseInt(gl))     : null,
+        golesVisitante: jugado ? (perdidoAmbos ? 0 : parseInt(gv))     : null,
         perdidoAmbos:   jugado ? perdidoAmbos : false,
         goles:    jugado ? (partido.goles    || []) : [],
         tarjetas: jugado ? (partido.tarjetas || []) : [],
@@ -527,12 +527,11 @@ export function PartidoRowInline({ partido, clubes, onGuardar, onAbrirGoles }) {
         </div>
         {/* Partido perdido para ambos */}
         {jugado && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, background: perdidoAmbos ? "#fef2f2" : "#f9fafb", borderRadius: 8, padding: "6px 10px", border: `1px solid ${perdidoAmbos ? "#fecaca" : "#e5e7eb"}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
             <Switch value={perdidoAmbos} onChange={v => { setPerdidoAmbos(v); setError(""); }} />
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: perdidoAmbos ? "#dc2626" : "#374151" }}>Partido perdido para ambos</div>
-              {perdidoAmbos && <div style={{ fontSize: 10, color: "#6b7280" }}>Ambos equipos pierden (0 puntos)</div>}
-            </div>
+            <span style={{ fontSize: 10, color: perdidoAmbos ? "#dc2626" : "#9ca3af", fontWeight: perdidoAmbos ? 700 : 400 }}>
+              Perdido para ambos{perdidoAmbos ? " (0 pts c/u)" : ""}
+            </span>
           </div>
         )}
         {/* Error */}
@@ -597,6 +596,7 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
   const [buscandoV,  setBuscandoV]  = useState(false);
   const [formNuevoJug, setFormNuevoJug] = useState(null); // { side, apellido, nombre, dni, fechaNac }
   const [guardandoJug, setGuardandoJug] = useState(false);
+  const [refuerzos,    setRefuerzos]    = useState(() => (partido.refuerzos || []).map(r => ({ ...r })));
 
   useEffect(() => {
     cargarJugadores();
@@ -612,23 +612,37 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
       ]);
       const lJugs = lSnap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.apellido.localeCompare(b.apellido));
       const vJugs = vSnap.docs.map(d => ({ docId: d.id, ...d.data() })).sort((a, b) => a.apellido.localeCompare(b.apellido));
-      setLocalJugs(lJugs);
-      setVisitJugs(vJugs);
+
+      // Fusionar refuerzos guardados en Firebase
+      const storedRefs = partido.refuerzos || [];
+      const mergedL = [...lJugs];
+      const mergedV = [...vJugs];
+      storedRefs.forEach(r => {
+        const j = { docId: r.docId, apellido: r.apellido, nombre: r.nombre, esRefuerzo: true };
+        if (r.side === "local") {
+          if (!mergedL.some(x => x.docId === r.docId)) mergedL.push(j);
+        } else {
+          if (!mergedV.some(x => x.docId === r.docId)) mergedV.push(j);
+        }
+      });
+      mergedL.sort((a, b) => a.apellido.localeCompare(b.apellido));
+      mergedV.sort((a, b) => a.apellido.localeCompare(b.apellido));
+      setLocalJugs(mergedL);
+      setVisitJugs(mergedV);
 
       // Pre-cargar stats desde los datos existentes
       const initStats = {};
-      const allJugs = [...lJugs, ...vJugs];
-      allJugs.forEach(j => { initStats[j.docId] = { goles: 0, amarilla: false, roja: false }; });
+      [...mergedL, ...mergedV].forEach(j => { initStats[j.docId] = { goles: 0, amarilla: false, roja: false }; });
 
       // Mapear goles existentes por nombre
       (partido.goles || []).forEach(g => {
-        const side = g.equipo === "local" ? lJugs : vJugs;
+        const side = g.equipo === "local" ? mergedL : mergedV;
         const jug = side.find(j => `${j.apellido}, ${j.nombre}` === g.nombre);
         if (jug) initStats[jug.docId] = { ...(initStats[jug.docId] || { amarilla: false, roja: false }), goles: g.cantidad || 1 };
       });
       // Mapear tarjetas existentes
       (partido.tarjetas || []).forEach(t => {
-        const side = t.equipo === "local" ? lJugs : vJugs;
+        const side = t.equipo === "local" ? mergedL : mergedV;
         const jug = side.find(j => `${j.apellido}, ${j.nombre}` === t.nombre);
         if (jug) {
           const key = t.tipo === "amarilla" ? "amarilla" : "roja";
@@ -678,7 +692,7 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
     process(visitJugs, "visitante");
 
     try {
-      await onGuardar({ goles, tarjetas });
+      await onGuardar({ goles, tarjetas, refuerzos });
     } finally {
       setGuardando(false);
     }
@@ -691,21 +705,24 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
     try {
       const snap = await getDocs(query(collection(db, "ligas", ligaId, "jugadores"), where("dni", "==", dni)));
       if (!snap.empty) {
-        const j = { docId: snap.docs[0].id, ...snap.docs[0].data() };
-        // Agregar a la lista correspondiente si no está ya
+        const data = snap.docs[0].data();
+        const clubIdEsperado = side === "local" ? partido.localId : partido.visitanteId;
+        const esRef = data.clubId !== clubIdEsperado || (catId && data.categoriaId !== catId);
+        const j = { docId: snap.docs[0].id, ...data, ...(esRef ? { esRefuerzo: true } : {}) };
         if (side === "local") {
           setLocalJugs(prev => prev.some(x => x.docId === j.docId) ? prev : [...prev, j].sort((a, b) => a.apellido.localeCompare(b.apellido)));
         } else {
           setVisitJugs(prev => prev.some(x => x.docId === j.docId) ? prev : [...prev, j].sort((a, b) => a.apellido.localeCompare(b.apellido)));
         }
         setStats(prev => ({ ...prev, [j.docId]: prev[j.docId] || { goles: 0, amarilla: false, roja: false } }));
-        if (side === "local") setDniL("");
-        else setDniV("");
+        if (esRef) {
+          setRefuerzos(prev => prev.some(r => r.docId === j.docId) ? prev :
+            [...prev, { docId: j.docId, apellido: data.apellido, nombre: data.nombre, side }]);
+        }
+        if (side === "local") setDniL(""); else setDniV("");
       } else {
-        // Mostrar formulario para crear jugador
         setFormNuevoJug({ side, apellido: "", nombre: "", dni, fechaNac: "", fotoFile: null, fotoPreview: "" });
-        if (side === "local") setDniL("");
-        else setDniV("");
+        if (side === "local") setDniL(""); else setDniV("");
       }
     } finally {
       setBuscando(false);
@@ -866,10 +883,15 @@ function ColEquipo({ titulo, jugs, stats, setStat, search, setSearch, dniInput, 
         {jugs.map(j => {
           const s = stats[j.docId] || { goles: 0, amarilla: false, roja: false };
           const tieneAlgo = s.goles > 0 || s.amarilla || s.roja;
+          const esRef = j.esRefuerzo;
           return (
-            <div key={j.docId} style={{ background: tieneAlgo ? "#f0fdf4" : "#fff", border: `1px solid ${tieneAlgo ? "#4ade80" : "#f3f4f6"}`, borderRadius: 8, padding: "6px 8px" }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "#111827", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {j.apellido}, {j.nombre}
+            <div key={j.docId} style={{
+              background: esRef ? (tieneAlgo ? "#fef3c7" : "#fffbeb") : (tieneAlgo ? "#f0fdf4" : "#fff"),
+              border: `1px solid ${esRef ? "#fde68a" : (tieneAlgo ? "#4ade80" : "#f3f4f6")}`,
+              borderRadius: 8, padding: "6px 8px"
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: esRef ? "#92400e" : "#111827", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {j.apellido}, {j.nombre}{esRef ? <span style={{ fontSize: 9, fontWeight: 700, background: "#fde68a", color: "#92400e", borderRadius: 4, padding: "1px 4px", marginLeft: 4 }}>REF</span> : null}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {/* Goles */}

@@ -103,7 +103,7 @@ function calcularTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
       else p++;
     });
     const san      = sanciones.find(s => s.clubId === club.docId);
-    const descuento = san ? (san.pts || 0) : 0;
+    const descuento = san ? (san.puntos || san.pts || 0) : 0;
     const pts       = Math.max(0, g * pV + e * pE - descuento);
     return { ...club, pj: jugados.length, g, e, p, gf, gc, dg: gf - gc, descuento, pts };
   }).sort((a, b) => b.pts - a.pts || b.dg - a.dg || b.gf - a.gf);
@@ -1126,6 +1126,7 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias }) {
   ];
   const [selId,    setSelId]    = useState(opciones[0]?.id || "");
   const [partidos, setPartidos] = useState([]);
+  const [sanciones, setSanciones] = useState([]);
   const [cargando, setCargando] = useState(false);
 
   const pV    = zona.puntosPorVictoria ?? 3;
@@ -1148,9 +1149,15 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias }) {
           )
         );
         setPartidos(results.flat());
+        setSanciones(zona.tablaGeneralSanciones || []);
       } else {
-        const snap = await getDocs(collection(doc(collection(zonaRef, "categorias"), selId), "partidos"));
-        setPartidos(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
+        const catRef = doc(collection(zonaRef, "categorias"), selId);
+        const [pSnap, catSnap] = await Promise.all([
+          getDocs(collection(catRef, "partidos")),
+          getDoc(catRef),
+        ]);
+        setPartidos(pSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
+        setSanciones(catSnap.data()?.sanciones || []);
       }
     } finally {
       setCargando(false);
@@ -1172,7 +1179,7 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias }) {
         return (
           <div key={grupo.id}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>{grupo.nombre}</div>
-            <TabPosiciones clubes={grupoClubs} partidos={grupoPartidos} sanciones={[]} pV={pVActivo} />
+            <TabPosiciones clubes={grupoClubs} partidos={grupoPartidos} sanciones={sanciones} pV={pVActivo} />
           </div>
         );
       })}

@@ -1824,6 +1824,9 @@ function UpdateBanner() {
   const [reg, setReg] = useState(null);
 
   useEffect(() => {
+    // Si el SW detectó actualización antes de que React montara, leerlo del global
+    if (window.__swPendingReg) setReg(window.__swPendingReg);
+
     function onUpdate(e) { setReg(e.detail); }
     window.addEventListener('swUpdateAvailable', onUpdate);
     return () => window.removeEventListener('swUpdateAvailable', onUpdate);

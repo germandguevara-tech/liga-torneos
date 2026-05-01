@@ -412,7 +412,9 @@ function PartidoLineal({ partido, clubes, onClick }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0, minWidth: 76 }}>
         {partido.jugado
-          ? <span style={{ fontSize: 13, fontWeight: 700, color: "#111827", background: "#f0fdf4", padding: "3px 10px", borderRadius: 8, letterSpacing: 1 }}>{partido.golesLocal} - {partido.golesVisitante}</span>
+          ? partido.perdidoAmbos
+            ? <span style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", background: "#fef2f2", padding: "3px 10px", borderRadius: 8, letterSpacing: 1 }}>W - W</span>
+            : <span style={{ fontSize: 13, fontWeight: 700, color: "#111827", background: "#f0fdf4", padding: "3px 10px", borderRadius: 8, letterSpacing: 1 }}>{partido.golesLocal} - {partido.golesVisitante}</span>
           : <span style={{ fontSize: 12, color: "#6b7280", background: "#f9fafb", padding: "3px 10px", borderRadius: 8 }}>vs</span>
         }
         <span style={{ fontSize: 10, fontWeight: 600, color: partido.jugado ? "#166534" : "#6b7280", background: partido.jugado ? "#dcfce7" : "#f3f4f6", padding: "1px 7px", borderRadius: 20 }}>
@@ -722,7 +724,9 @@ function VistaPartido({ partido, clubes, onBack }) {
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0 }}>
               {partido.jugado
-                ? <span style={{ fontSize: 32, fontWeight: 700, color: "#111827", letterSpacing: 2 }}>{partido.golesLocal} - {partido.golesVisitante}</span>
+                ? partido.perdidoAmbos
+                  ? <span style={{ fontSize: 24, fontWeight: 700, color: "#dc2626", letterSpacing: 2 }}>W - W</span>
+                  : <span style={{ fontSize: 32, fontWeight: 700, color: "#111827", letterSpacing: 2 }}>{partido.golesLocal} - {partido.golesVisitante}</span>
                 : <span style={{ fontSize: 18, color: "#6b7280" }}>vs</span>
               }
               <Badge color={partido.jugado ? "#166534" : "#6b7280"} bg={partido.jugado ? "#dcfce7" : "#f3f4f6"}>
@@ -981,6 +985,10 @@ function CruceCardPublico({ cruce, fase, clubes, tipo, categorias }) {
             {fase.idaYVuelta ? (
               <span style={{ fontSize: 10, color: "#6b7280", flex: 1 }}>
                 {cruce.golesLocal ?? "—"}–{cruce.golesVisitante ?? "—"} · {cruce.golesLocalVuelta ?? "—"}–{cruce.golesVisitanteVuelta ?? "—"}
+              </span>
+            ) : cruce.perdidoAmbos ? (
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", flex: 1, textAlign: "center", letterSpacing: 1 }}>
+                W - W
               </span>
             ) : (
               <span style={{ fontSize: 12, fontWeight: 700, color: "#111827", flex: 1, textAlign: "center", letterSpacing: 1 }}>
@@ -1689,7 +1697,10 @@ function DetallePartidoClubModal({ partido, pierna, clubLocal, clubVisitante, on
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "20px 0" }}>
               <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#374151", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nomLocal}</span>
               <div style={{ textAlign: "center", flexShrink: 0 }}>
-                <div style={{ fontSize: 28, fontWeight: 800, color: "#111827", letterSpacing: 2 }}>{gL} - {gV}</div>
+                {partido.perdidoAmbos
+                  ? <div style={{ fontSize: 22, fontWeight: 800, color: "#dc2626", letterSpacing: 2 }}>W - W</div>
+                  : <div style={{ fontSize: 28, fontWeight: 800, color: "#111827", letterSpacing: 2 }}>{gL} - {gV}</div>
+                }
                 {pen && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>({pL}-{pV} pen)</div>}
               </div>
               <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#374151", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nomVis}</span>

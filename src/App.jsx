@@ -1839,24 +1839,25 @@ function UpdateBanner() {
   }
 
   return (
-    <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
-      background: "#1a3a2a", color: "#fff",
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "12px 16px", gap: 12,
-      boxShadow: "0 -2px 12px rgba(0,0,0,0.25)",
-    }}>
-      <span style={{ fontSize: 13, fontWeight: 500 }}>Nueva versión disponible</span>
-      <button
-        onClick={actualizar}
-        style={{
-          background: "#4ade80", color: "#1a3a2a", border: "none",
-          borderRadius: 8, padding: "7px 16px",
-          fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0,
-        }}
-      >
+    <div
+      onClick={actualizar}
+      style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
+        background: "#1a3a2a", color: "#fff",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "12px 16px", gap: 12,
+        boxShadow: "0 -2px 12px rgba(0,0,0,0.25)",
+        cursor: "pointer",
+      }}
+    >
+      <span style={{ fontSize: 13, fontWeight: 500 }}>Nueva versión disponible — Tocar para actualizar</span>
+      <span style={{
+        background: "#4ade80", color: "#1a3a2a",
+        borderRadius: 8, padding: "7px 16px",
+        fontSize: 13, fontWeight: 700, flexShrink: 0,
+      }}>
         Actualizar
-      </button>
+      </span>
     </div>
   );
 }

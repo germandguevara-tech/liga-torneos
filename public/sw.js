@@ -1,9 +1,10 @@
-const CACHE_NAME = 'lifhur-v2';
+const BUILD_TIME = '__BUILD_TIME__';
+const CACHE_NAME = 'lifhur-' + BUILD_TIME;
 const ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
-  // No llamar skipWaiting() aqui: el nuevo SW espera hasta que el usuario confirme
+  // No llamar skipWaiting aqui: el nuevo SW espera hasta que el usuario confirme
 });
 
 self.addEventListener('activate', e => {
@@ -24,6 +25,14 @@ self.addEventListener('fetch', e => {
   // No cachear requests de Firebase
   if (e.request.url.includes('firestore.googleapis.com') ||
       e.request.url.includes('firebase')) return;
+
+  // index.html siempre desde red para detectar nuevos bundles
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
 
   e.respondWith(
     caches.match(e.request).then(cached => {

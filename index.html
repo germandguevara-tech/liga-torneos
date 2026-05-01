@@ -30,21 +30,32 @@
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js').then(reg => {
-          // Si ya hay un SW esperando al cargar (ej: tab reabiert con nueva version)
-          if (reg.waiting) {
+          function notificarActualizacion() {
             window.dispatchEvent(new CustomEvent('swUpdateAvailable', { detail: reg }));
           }
+
+          // Si ya hay un SW esperando al cargar (tab reabierta con version nueva)
+          if (reg.waiting) notificarActualizacion();
+
           // Detectar cuando se instala un nuevo SW
           reg.addEventListener('updatefound', () => {
             const newWorker = reg.installing;
             newWorker.addEventListener('statechange', () => {
-              // 'installed' + controller presente = hay version nueva esperando
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                window.dispatchEvent(new CustomEvent('swUpdateAvailable', { detail: reg }));
+                notificarActualizacion();
               }
             });
           });
+
+          // Chequear actualizacion cada 60 segundos (para apps que quedan abiertas)
+          setInterval(() => reg.update(), 60000);
+
+          // Chequear cuando el usuario vuelve a la app
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reg.update();
+          });
         });
+
         // Cuando el SW activo cambia (tras skipWaiting), recargar la pagina
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           window.location.reload();

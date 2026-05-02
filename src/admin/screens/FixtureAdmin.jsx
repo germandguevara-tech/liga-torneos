@@ -598,6 +598,8 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
   const [formNuevoJug, setFormNuevoJug] = useState(null); // { side, apellido, nombre, dni, fechaNac }
   const [guardandoJug, setGuardandoJug] = useState(false);
   const [refuerzos,    setRefuerzos]    = useState(() => (partido.refuerzos || []).map(r => ({ ...r })));
+  const [errorDniL,    setErrorDniL]    = useState("");
+  const [errorDniV,    setErrorDniV]    = useState("");
 
   useEffect(() => {
     cargarJugadores();
@@ -699,16 +701,31 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
     }
   }
 
+  function eliminarRefuerzo(docId, side) {
+    if (side === "local") setLocalJugs(prev => prev.filter(j => j.docId !== docId));
+    else setVisitJugs(prev => prev.filter(j => j.docId !== docId));
+    setRefuerzos(prev => prev.filter(r => r.docId !== docId));
+    setStats(prev => { const n = { ...prev }; delete n[docId]; return n; });
+  }
+
   async function buscarPorDni(dni, side) {
     if (dni.length < 7) return;
-    const setBuscando = side === "local" ? setBuscandoL : setBuscandoV;
+    const setBuscando  = side === "local" ? setBuscandoL  : setBuscandoV;
+    const setErrorDni  = side === "local" ? setErrorDniL  : setErrorDniV;
     setBuscando(true);
+    setErrorDni("");
     try {
       const snap = await getDocs(query(collection(db, "ligas", ligaId, "jugadores"), where("dni", "==", dni)));
       if (!snap.empty) {
         const data = snap.docs[0].data();
         const clubIdEsperado = side === "local" ? partido.localId : partido.visitanteId;
-        const esRef = data.clubId !== clubIdEsperado || (catId && data.categoriaId !== catId);
+        // Rechazar jugadores de otro club
+        if (data.clubId !== clubIdEsperado) {
+          setErrorDni("El jugador pertenece a otro club y no puede agregarse como refuerzo.");
+          if (side === "local") setDniL(""); else setDniV("");
+          return;
+        }
+        const esRef = catId && data.categoriaId !== catId;
         const j = { docId: snap.docs[0].id, ...data, ...(esRef ? { esRefuerzo: true } : {}) };
         if (side === "local") {
           setLocalJugs(prev => prev.some(x => x.docId === j.docId) ? prev : [...prev, j].sort((a, b) => a.apellido.localeCompare(b.apellido)));
@@ -800,6 +817,8 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
               setDniInput={setDniL}
               buscando={buscandoL}
               onBuscarDni={() => buscarPorDni(dniL, "local")}
+              errorDni={errorDniL}
+              onEliminarRefuerzo={docId => eliminarRefuerzo(docId, "local")}
             />
             {/* Visitante */}
             <ColEquipo
@@ -813,6 +832,8 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
               setDniInput={setDniV}
               buscando={buscandoV}
               onBuscarDni={() => buscarPorDni(dniV, "visitante")}
+              errorDni={errorDniV}
+              onEliminarRefuerzo={docId => eliminarRefuerzo(docId, "visitante")}
             />
           </div>
 
@@ -865,7 +886,7 @@ export function GolesModal({ partido, clubes, ligaId, catId, onGuardar, onClose 
 }
 
 // ── Columna de equipo en GolesModal ───────────────────────────────────────────
-function ColEquipo({ titulo, jugs, stats, setStat, search, setSearch, dniInput, setDniInput, buscando, onBuscarDni }) {
+function ColEquipo({ titulo, jugs, stats, setStat, search, setSearch, dniInput, setDniInput, buscando, onBuscarDni, errorDni, onEliminarRefuerzo }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "#166534", background: "#dcfce7", borderRadius: 6, padding: "4px 8px", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -891,8 +912,16 @@ function ColEquipo({ titulo, jugs, stats, setStat, search, setSearch, dniInput, 
               border: `1px solid ${esRef ? "#fde68a" : (tieneAlgo ? "#4ade80" : "#f3f4f6")}`,
               borderRadius: 8, padding: "6px 8px"
             }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: esRef ? "#92400e" : "#111827", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {j.apellido}, {j.nombre}{esRef ? <span style={{ fontSize: 9, fontWeight: 700, background: "#fde68a", color: "#92400e", borderRadius: 4, padding: "1px 4px", marginLeft: 4 }}>REF</span> : null}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: esRef ? "#92400e" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {j.apellido}, {j.nombre}{esRef ? <span style={{ fontSize: 9, fontWeight: 700, background: "#fde68a", color: "#92400e", borderRadius: 4, padding: "1px 4px", marginLeft: 4 }}>REF</span> : null}
+                </span>
+                {esRef && (
+                  <button onClick={() => onEliminarRefuerzo(j.docId)} title="Quitar refuerzo"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 13, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}>
+                    ✕
+                  </button>
+                )}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {/* Goles */}
@@ -929,13 +958,18 @@ function ColEquipo({ titulo, jugs, stats, setStat, search, setSearch, dniInput, 
           value={dniInput}
           onChange={e => setDniInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && onBuscarDni()}
-          style={{ flex: 1, border: "1px solid #dcfce7", borderRadius: 8, padding: "5px 8px", fontSize: 11, outline: "none" }}
+          style={{ flex: 1, border: `1px solid ${errorDni ? "#fecaca" : "#dcfce7"}`, borderRadius: 8, padding: "5px 8px", fontSize: 11, outline: "none" }}
         />
         <button onClick={onBuscarDni} disabled={buscando || dniInput.length < 7}
           style={{ background: "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 8, padding: "5px 8px", cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
           {buscando ? "..." : "+ DNI"}
         </button>
       </div>
+      {errorDni && (
+        <div style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 8px" }}>
+          {errorDni}
+        </div>
+      )}
     </div>
   );
 }

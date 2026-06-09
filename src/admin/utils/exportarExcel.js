@@ -148,22 +148,32 @@ export async function exportarFechaExcel({ zonaRef, zona, categorias, clubes, jo
 
   if (matches.length === 0) throw new Error("No hay partidos para esta fecha");
 
-  // Construir cuadro de doble entrada
-  const headers = ["Partido", ...categorias.map(c => c.nombre)];
-  const rows = matches.map(match => {
-    const label = `${match.localNombre} vs ${match.visitanteNombre}`;
-    const resultados = categorias.map(cat => {
+  // Construir cuadro de doble entrada: 2 filas por partido + fila vacía separadora
+  const headers = ["Equipo", ...categorias.map(c => c.nombre)];
+  const rows = [headers];
+  for (const match of matches) {
+    const golesLocal = categorias.map(cat => {
       const catData = catPartidos.find(r => r.cat.docId === cat.docId);
       const p = catData?.partidos.find(
         p => p.localId === match.localId && p.visitanteId === match.visitanteId
       );
-      if (!p || !p.jugado || p.golesLocal == null || p.golesVisitante == null) return "-";
-      return `${p.golesLocal} - ${p.golesVisitante}`;
+      if (!p || !p.jugado || p.golesLocal == null) return "-";
+      return p.golesLocal;
     });
-    return [label, ...resultados];
-  });
+    const golesVisitante = categorias.map(cat => {
+      const catData = catPartidos.find(r => r.cat.docId === cat.docId);
+      const p = catData?.partidos.find(
+        p => p.localId === match.localId && p.visitanteId === match.visitanteId
+      );
+      if (!p || !p.jugado || p.golesVisitante == null) return "-";
+      return p.golesVisitante;
+    });
+    rows.push([`${match.localNombre} (L)`,    ...golesLocal]);
+    rows.push([`${match.visitanteNombre} (V)`, ...golesVisitante]);
+    rows.push([]); // fila vacía entre partidos
+  }
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, safeName(`Fecha ${jornada}`));
 

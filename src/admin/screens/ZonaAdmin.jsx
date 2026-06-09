@@ -266,7 +266,7 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
         )}
         {tab === "tablas" && tieneTablas && (
           <TabTablas
-            zonaRef={zonaRef} zona={zona} grupos={grupos}
+            zonaRef={zonaRef} zona={{ ...zona, tipo: config.tipo, puntosPorVictoria: config.puntosPorVictoria, puntosPorEmpate: config.puntosPorEmpate }} grupos={grupos}
             clubes={clubesZona} categorias={categoriasZona}
             tablaConf={tablaConf} setTablaConf={setTablaConf}
             tablaAcumConf={tablaAcumConf} setTablaAcumConf={setTablaAcumConf}

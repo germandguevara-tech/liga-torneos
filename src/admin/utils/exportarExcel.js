@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import { collection, getDocs, getDoc, doc } from "firebase/firestore";
 
-const TABLA_HEADERS = ["Pos", "Club", "PJ", "G", "E", "P", "GF", "GC", "DG", "Pts"];
+const TABLA_HEADERS = ["Pos", "Club", "Pts", "PJ", "G", "E", "P", "GF", "GC", "DG"];
 
 function computarTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
   const m = {};
@@ -28,7 +28,7 @@ function computarTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
 }
 
 function tablaToRows(tabla) {
-  return tabla.map((r, i) => [i + 1, r.nombre, r.pj, r.g, r.e, r.p, r.gf, r.gc, r.gf - r.gc, r.pts]);
+  return tabla.map((r, i) => [i + 1, r.nombre, r.pts, r.pj, r.g, r.e, r.p, r.gf, r.gc, r.gf - r.gc]);
 }
 
 function safeName(nombre) {

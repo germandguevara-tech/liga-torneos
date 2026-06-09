@@ -3,6 +3,28 @@ import { collection, getDocs, getDoc, doc } from "firebase/firestore";
 
 const TABLA_HEADERS = ["Pos", "Club", "Pts", "PJ", "G", "E", "P", "GF", "GC", "DG"];
 
+// Anchos de columna para hoja de tabla de posiciones
+const TABLA_COLS = [
+  { wch: 5  }, // Pos
+  { wch: 26 }, // Club
+  { wch: 6  }, // Pts
+  { wch: 6  }, // PJ
+  { wch: 6  }, // G
+  { wch: 6  }, // E
+  { wch: 6  }, // P
+  { wch: 6  }, // GF
+  { wch: 6  }, // GC
+  { wch: 6  }, // DG
+];
+
+function boldRow(ws, rowIdx, numCols) {
+  for (let c = 0; c < numCols; c++) {
+    const addr = XLSX.utils.encode_cell({ r: rowIdx, c });
+    if (!ws[addr]) continue;
+    ws[addr].s = { font: { bold: true } };
+  }
+}
+
 function computarTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
   const m = {};
   clubes.forEach(c => {
@@ -41,7 +63,6 @@ export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clu
     day: "2-digit", month: "2-digit", year: "numeric"
   }).replace(/\//g, "-");
 
-  // Fetch partidos (y sanciones para liga) de todas las categorías en paralelo
   const catData = await Promise.all(
     categorias.map(async cat => {
       const catRef = doc(collection(zonaRef, "categorias"), cat.docId);
@@ -58,30 +79,36 @@ export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clu
     })
   );
 
-  // Agregar una hoja por categoría
   catData.forEach(({ cat, partidos, sanciones }) => {
     if (tipo === "copa_club") {
-      // Grupos separados dentro de la misma hoja
       const wsData = [];
+      const headerRows = []; // filas que deben ir en negrita
+
       grupos.forEach(grupo => {
+        headerRows.push(wsData.length);           // nombre del grupo
+        wsData.push([grupo.nombre]);
+        headerRows.push(wsData.length);           // columnas de la tabla
+        wsData.push(TABLA_HEADERS);
+
         const grupoClubs = (grupo.clubes || [])
           .map(id => clubes.find(c => c.docId === id))
           .filter(Boolean);
         const grupoPartidos = partidos.filter(p => p.grupoId === grupo.id);
-        const tabla = computarTabla(grupoClubs, grupoPartidos, [], pV, pE);
-        wsData.push([grupo.nombre]);
-        wsData.push(TABLA_HEADERS);
-        tablaToRows(tabla).forEach(r => wsData.push(r));
+        tablaToRows(computarTabla(grupoClubs, grupoPartidos, [], pV, pE))
+          .forEach(r => wsData.push(r));
         wsData.push([]);
       });
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(wsData), safeName(cat.nombre));
+
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      headerRows.forEach(r => boldRow(ws, r, TABLA_HEADERS.length));
+      ws['!cols'] = TABLA_COLS;
+      XLSX.utils.book_append_sheet(wb, ws, safeName(cat.nombre));
     } else {
-      const tabla = computarTabla(clubes, partidos, sanciones, pV, pE);
-      XLSX.utils.book_append_sheet(
-        wb,
-        XLSX.utils.aoa_to_sheet([TABLA_HEADERS, ...tablaToRows(tabla)]),
-        safeName(cat.nombre)
-      );
+      const wsData = [TABLA_HEADERS, ...tablaToRows(computarTabla(clubes, partidos, sanciones, pV, pE))];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      boldRow(ws, 0, TABLA_HEADERS.length);
+      ws['!cols'] = TABLA_COLS;
+      XLSX.utils.book_append_sheet(wb, ws, safeName(cat.nombre));
     }
   });
 
@@ -96,12 +123,13 @@ export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clu
         )
       )).flat();
       const pVGen = tablaConf.tablaGeneralPuntosVictoria ?? 3;
-      const tabla = computarTabla(clubes, allPartidos, tablaConf.tablaGeneralSanciones || [], pVGen, pE);
-      XLSX.utils.book_append_sheet(
-        wb,
-        XLSX.utils.aoa_to_sheet([TABLA_HEADERS, ...tablaToRows(tabla)]),
-        "Tabla General"
-      );
+      const wsData = [TABLA_HEADERS, ...tablaToRows(
+        computarTabla(clubes, allPartidos, tablaConf.tablaGeneralSanciones || [], pVGen, pE)
+      )];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      boldRow(ws, 0, TABLA_HEADERS.length);
+      ws['!cols'] = TABLA_COLS;
+      XLSX.utils.book_append_sheet(wb, ws, "Tabla General");
     }
   }
 
@@ -112,7 +140,6 @@ export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clu
 }
 
 export async function exportarFechaExcel({ zonaRef, zona, categorias, clubes, jornada }) {
-  // Cargar partidos de esa jornada para todas las categorías en paralelo
   const catPartidos = await Promise.all(
     categorias.map(async cat => {
       const snap = await getDocs(
@@ -125,7 +152,6 @@ export async function exportarFechaExcel({ zonaRef, zona, categorias, clubes, jo
     })
   );
 
-  // Recopilar pares únicos de partidos ordenados por 'orden'
   const seenKeys = new Set();
   const matches = [];
   for (const { partidos } of catPartidos) {
@@ -148,7 +174,6 @@ export async function exportarFechaExcel({ zonaRef, zona, categorias, clubes, jo
 
   if (matches.length === 0) throw new Error("No hay partidos para esta fecha");
 
-  // Construir cuadro de doble entrada: 2 filas por partido + fila vacía separadora
   const headers = ["Equipo", ...categorias.map(c => c.nombre)];
   const rows = [headers];
   for (const match of matches) {
@@ -170,10 +195,18 @@ export async function exportarFechaExcel({ zonaRef, zona, categorias, clubes, jo
     });
     rows.push([`${match.localNombre} (L)`,    ...golesLocal]);
     rows.push([`${match.visitanteNombre} (V)`, ...golesVisitante]);
-    rows.push([]); // fila vacía entre partidos
+    rows.push([]);
   }
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  // Negrita en la fila de encabezado
+  boldRow(ws, 0, headers.length);
+
+  // Ancho de columnas: equipo más ancho, categorías según largo del nombre
+  const catWidth = Math.max(...categorias.map(c => c.nombre.length), 8) + 2;
+  ws['!cols'] = [{ wch: 28 }, ...categorias.map(() => ({ wch: catWidth }))];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, safeName(`Fecha ${jornada}`));
 

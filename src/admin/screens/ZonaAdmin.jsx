@@ -5,6 +5,7 @@ import { HeaderAdmin, Card, Modal, ConfirmModal, Switch, BtnPrimary, Campo, Inpu
 import FixtureAdmin    from "./FixtureAdmin";
 import FixtureCopaClub from "./FixtureCopaClub";
 import BracketAdmin   from "./BracketAdmin";
+import { exportarTablasExcel, exportarFechaExcel } from "../utils/exportarExcel";
 
 const CRITERIOS_DEFAULT = [
   { id: "puntos",         label: "Puntos",                 activo: true  },
@@ -265,13 +266,25 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
           />
         )}
         {tab === "tablas" && tieneTablas && (
-          <TabTablas
-            zonaRef={zonaRef} zona={{ ...zona, tipo: config.tipo, puntosPorVictoria: config.puntosPorVictoria, puntosPorEmpate: config.puntosPorEmpate }} grupos={grupos}
-            clubes={clubesZona} categorias={categoriasZona}
-            tablaConf={tablaConf} setTablaConf={setTablaConf}
-            tablaAcumConf={tablaAcumConf} setTablaAcumConf={setTablaAcumConf}
-            compRef={compRef}
-          />
+          <>
+            <TabTablas
+              zonaRef={zonaRef} zona={{ ...zona, tipo: config.tipo, puntosPorVictoria: config.puntosPorVictoria, puntosPorEmpate: config.puntosPorEmpate }} grupos={grupos}
+              clubes={clubesZona} categorias={categoriasZona}
+              tablaConf={tablaConf} setTablaConf={setTablaConf}
+              tablaAcumConf={tablaAcumConf} setTablaAcumConf={setTablaAcumConf}
+              compRef={compRef}
+            />
+            <ExportarSection
+              zonaRef={zonaRef} zona={zona}
+              tipo={config.tipo}
+              categorias={categoriasZona}
+              clubes={clubesZona}
+              grupos={grupos}
+              tablaConf={tablaConf}
+              pV={config.puntosPorVictoria ?? 3}
+              pE={config.puntosPorEmpate ?? 1}
+            />
+          </>
         )}
         {tab === "bracket" && (
           <BracketAdmin zonaRef={zonaRef} zona={zona} clubes={clubesZona} categorias={categoriasZona} />
@@ -2627,5 +2640,72 @@ function LogoClub({ club, size = 40 }) {
     <div style={{ width: size, height: size, borderRadius: "50%", background: "#f0fdf4", border: "1.5px solid #dcfce7", display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.32, fontWeight: 700, color: "#1a3a2a", flexShrink: 0 }}>
       {iniciales(club.nombre)}
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EXPORTAR A EXCEL
+// ══════════════════════════════════════════════════════════════════════════════
+function ExportarSection({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, pV, pE }) {
+  const [exportandoTablas, setExportandoTablas] = useState(false);
+  const [exportandoFecha,  setExportandoFecha]  = useState(false);
+  const [jornada,          setJornada]          = useState("1");
+  const [error,            setError]            = useState("");
+
+  const ocupado = exportandoTablas || exportandoFecha;
+
+  async function handleTablas() {
+    setError("");
+    setExportandoTablas(true);
+    try {
+      await exportarTablasExcel({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, pV, pE });
+    } catch (e) {
+      setError("Error al exportar tablas: " + e.message);
+    } finally {
+      setExportandoTablas(false);
+    }
+  }
+
+  async function handleFecha() {
+    const num = parseInt(jornada, 10);
+    if (!num || num < 1) { setError("Ingresá un número de fecha válido"); return; }
+    setError("");
+    setExportandoFecha(true);
+    try {
+      await exportarFechaExcel({ zonaRef, zona, categorias, clubes, jornada: num });
+    } catch (e) {
+      setError("Error al exportar fecha: " + e.message);
+    } finally {
+      setExportandoFecha(false);
+    }
+  }
+
+  return (
+    <Card>
+      <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <SeccionLabel>Exportar a Excel</SeccionLabel>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <BtnPrimary onClick={handleTablas} disabled={ocupado}>
+            {exportandoTablas ? "Exportando…" : "Exportar tablas a Excel"}
+          </BtnPrimary>
+          <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Fecha Nº</label>
+              <input
+                type="number" min="1" value={jornada}
+                onChange={e => setJornada(e.target.value)}
+                disabled={ocupado}
+                style={{ border: "1px solid #d1fae5", borderRadius: 10, padding: "10px 12px", fontSize: 14,
+                  color: "#111827", outline: "none", background: "#f0fdf4", width: 72 }}
+              />
+            </div>
+            <BtnPrimary onClick={handleFecha} disabled={ocupado}>
+              {exportandoFecha ? "Exportando…" : "Exportar fecha"}
+            </BtnPrimary>
+          </div>
+        </div>
+        {error && <p style={{ color: "#dc2626", fontSize: 12, margin: 0 }}>{error}</p>}
+      </div>
+    </Card>
   );
 }

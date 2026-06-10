@@ -123,11 +123,33 @@ export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clu
         )
       )).flat();
       const pVGen = tablaConf.tablaGeneralPuntosVictoria ?? 3;
-      const wsData = [TABLA_HEADERS, ...tablaToRows(
-        computarTabla(clubes, allPartidos, tablaConf.tablaGeneralSanciones || [], pVGen, pE)
-      )];
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      boldRow(ws, 0, TABLA_HEADERS.length);
+      const sanciones = tablaConf.tablaGeneralSanciones || [];
+
+      let ws;
+      if (tipo === "copa_club" && grupos.length > 0) {
+        // Separar por grupo igual que las hojas por categoría
+        const wsData = [];
+        const headerRows = [];
+        grupos.forEach(grupo => {
+          headerRows.push(wsData.length);
+          wsData.push([grupo.nombre]);
+          headerRows.push(wsData.length);
+          wsData.push(TABLA_HEADERS);
+          const grupoClubs = (grupo.clubes || [])
+            .map(id => clubes.find(c => c.docId === id))
+            .filter(Boolean);
+          const grupoPartidos = allPartidos.filter(p => p.grupoId === grupo.id);
+          tablaToRows(computarTabla(grupoClubs, grupoPartidos, sanciones, pVGen, pE))
+            .forEach(r => wsData.push(r));
+          wsData.push([]);
+        });
+        ws = XLSX.utils.aoa_to_sheet(wsData);
+        headerRows.forEach(r => boldRow(ws, r, TABLA_HEADERS.length));
+      } else {
+        const wsData = [TABLA_HEADERS, ...tablaToRows(computarTabla(clubes, allPartidos, sanciones, pVGen, pE))];
+        ws = XLSX.utils.aoa_to_sheet(wsData);
+        boldRow(ws, 0, TABLA_HEADERS.length);
+      }
       ws['!cols'] = TABLA_COLS;
       XLSX.utils.book_append_sheet(wb, ws, "Tabla General");
     }

@@ -3,6 +3,7 @@ import { collection, getDocs, doc, updateDoc, writeBatch, addDoc, query, where }
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../../firebase";
 import { Card, Modal, Switch, BtnPrimary, Campo, InputAdmin, SelectAdmin, SeccionLabel, EmptyState, Spinner } from "../AdminUI";
+import { exportarFixtureExcel } from "../utils/exportarExcel";
 
 // ── Round-robin Berger con rotación intercalada ───────────────────────────────
 // El elemento fijo (slot más alto, o null/LIBRE para N impar) alterna local/visitante.
@@ -66,14 +67,16 @@ export default function FixtureAdmin({ zonaRef, zona, ligaId, clubes, categorias
 // PRE-PUBLICACIÓN
 // ══════════════════════════════════════════════════════════════════════════════
 function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
-  const N     = clubes.length;
-  const realN = N; // calcRondas agrega null interno para impar — todos los equipos necesitan slot
+  const N = clubes.length;
 
-  const [assigned,   setAssigned]   = useState(() => Array(realN).fill(""));
-  const [idaYVuelta, setIdaYVuelta] = useState(false);
-  const [fechas,     setFechas]     = useState([]);
-  const [publicando, setPublicando] = useState(false);
-  const [error,      setError]      = useState("");
+  const [modo,          setModo]          = useState("automatico"); // "automatico" | "manual"
+  const [assigned,      setAssigned]      = useState(() => Array(N).fill(""));
+  const [idaYVuelta,    setIdaYVuelta]    = useState(false);
+  const [fechas,        setFechas]        = useState([]);
+  const [fechasBorradas, setFechasBorradas] = useState(() => new Set());
+  const [fechasManual,  setFechasManual]  = useState([]);
+  const [publicando,    setPublicando]    = useState(false);
+  const [error,         setError]         = useState("");
 
   const rondas = useMemo(() => {
     const slots = assigned.map(id => id || null);
@@ -89,44 +92,69 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
     });
   }, [rondas.length]);
 
+  const assignedKey = assigned.join(",");
+  useEffect(() => { setFechasBorradas(new Set()); }, [assignedKey, idaYVuelta]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function setAsignado(idx, clubId) {
     setAssigned(prev => { const a = [...prev]; a[idx] = clubId; return a; });
   }
   function setFecha(idx, val) {
     setFechas(prev => { const a = [...prev]; a[idx] = val; return a; });
   }
+  function borrarFecha(idx) {
+    setFechasBorradas(prev => new Set([...prev, idx]));
+  }
 
-  const todosAsignados = assigned.every(id => id !== "");
-  const hayPareja      = realN >= 2;
+  const todosAsignados  = assigned.every(id => id !== "");
+  const hayPareja       = N >= 2;
+  const rondasVisibles  = rondas.filter((_, i) => !fechasBorradas.has(i));
+  const totalRealesAuto = rondasVisibles.reduce((s, r) => s + r.filter(([l, v]) => l !== null && v !== null).length, 0);
+  const totalRealesManual = fechasManual.reduce((s, fd) =>
+    s + fd.partidos.filter(p => p.localId && p.visitanteId).length, 0);
 
-  function buildFixtureBase() {
-    return rondas.flatMap((ronda, ji) =>
-      ronda.map(([lId, vId]) => {
-        const esLibre      = lId === null || vId === null;
-        const realLocalId  = lId  ?? vId;
-        const realVisId    = lId !== null && vId !== null ? vId : null;
-        const lClub        = clubes.find(c => c.docId === realLocalId);
-        const vClub        = realVisId ? clubes.find(c => c.docId === realVisId) : null;
-        return {
-          jornada:         ji + 1,
-          fecha:           fechas[ji] || "",
-          esLibre,
-          localId:         realLocalId  ?? null,
-          visitanteId:     realVisId    ?? null,
-          localNombre:     lClub?.nombre ?? "",
-          visitanteNombre: vClub?.nombre ?? "",
-        };
-      })
-    ).map((p, idx) => ({ ...p, orden: idx }));
+  function buildFixtureAuto() {
+    let jornada = 0;
+    const items = [];
+    rondas.forEach((ronda, ji) => {
+      if (fechasBorradas.has(ji)) return;
+      jornada++;
+      ronda.forEach(([lId, vId]) => {
+        const esLibre     = lId === null || vId === null;
+        const realLocalId = lId ?? vId;
+        const realVisId   = lId !== null && vId !== null ? vId : null;
+        const lClub       = clubes.find(c => c.docId === realLocalId);
+        const vClub       = realVisId ? clubes.find(c => c.docId === realVisId) : null;
+        items.push({ jornada, fecha: fechas[ji] || "", esLibre, localId: realLocalId ?? null, visitanteId: realVisId ?? null, localNombre: lClub?.nombre ?? "", visitanteNombre: vClub?.nombre ?? "" });
+      });
+    });
+    return items.map((p, idx) => ({ ...p, orden: idx }));
+  }
+
+  function buildFixtureManual() {
+    const items = [];
+    fechasManual.forEach((fd, ji) => {
+      fd.partidos.forEach(p => {
+        if (!p.localId || !p.visitanteId) return;
+        const lClub = clubes.find(c => c.docId === p.localId);
+        const vClub = clubes.find(c => c.docId === p.visitanteId);
+        items.push({ jornada: ji + 1, fecha: fd.fecha || "", esLibre: false, localId: p.localId, visitanteId: p.visitanteId, localNombre: lClub?.nombre ?? "", visitanteNombre: vClub?.nombre ?? "" });
+      });
+    });
+    return items.map((p, idx) => ({ ...p, orden: idx }));
   }
 
   async function publicar() {
-    if (!hayPareja)            { setError("Necesitás al menos 2 clubes."); return; }
-    if (!todosAsignados)       { setError("Asigná un club a cada posición."); return; }
     if (categorias.length === 0) { setError("Agregá al menos una categoría antes de publicar."); return; }
-    const fixtureBase = buildFixtureBase();
-    const reales = fixtureBase.filter(p => !p.esLibre);
-    if (reales.length === 0)   { setError("No se generaron partidos."); return; }
+    let fixtureBase;
+    if (modo === "automatico") {
+      if (!hayPareja)      { setError("Necesitás al menos 2 clubes."); return; }
+      if (!todosAsignados) { setError("Asigná un club a cada posición."); return; }
+      fixtureBase = buildFixtureAuto();
+    } else {
+      if (fechasManual.length === 0) { setError("Agregá al menos una fecha con partidos."); return; }
+      fixtureBase = buildFixtureManual();
+    }
+    if (fixtureBase.filter(p => !p.esLibre).length === 0) { setError("No se generaron partidos."); return; }
 
     setPublicando(true); setError("");
     try {
@@ -135,142 +163,261 @@ function PrePublicacion({ zonaRef, zona, clubes, categorias, onPublicado }) {
         for (let i = 0; i < fixtureBase.length; i += 400) {
           const batch = writeBatch(db);
           fixtureBase.slice(i, i + 400).forEach(p => {
-            batch.set(doc(pCol), {
-              ...p,
-              ...(p.esLibre ? {} : { jugado: false, golesLocal: null, golesVisitante: null, goles: [], tarjetas: [] }),
-            });
+            batch.set(doc(pCol), { ...p, ...(p.esLibre ? {} : { jugado: false, golesLocal: null, golesVisitante: null, goles: [], tarjetas: [] }) });
           });
           await batch.commit();
         }
       }
-      await updateDoc(zonaRef, { publicado: true, idaYVuelta, fixtureBase });
+      await updateDoc(zonaRef, { publicado: true, idaYVuelta: modo === "automatico" ? idaYVuelta : false, fixtureBase });
       onPublicado();
     } catch (e) { setError("Error: " + e.message); }
     finally     { setPublicando(false); }
   }
 
-  const totalReales = rondas.reduce((s, r) => s + r.filter(([l, v]) => l !== null && v !== null).length, 0);
+  const totalActivos  = modo === "automatico" ? totalRealesAuto : totalRealesManual;
+  const puedePublicar = totalActivos > 0 && categorias.length > 0 &&
+    (modo === "manual" || (todosAsignados && hayPareja));
 
   return (
     <>
-      <SeccionLabel>Asignación de equipos</SeccionLabel>
+      {/* Selector de modo */}
+      <Card>
+        <div style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
+          {[["automatico", "⚡ Round-robin"], ["manual", "✏️ Manual"]].map(([m, label]) => (
+            <button key={m} onClick={() => { setModo(m); setError(""); }}
+              style={{ flex: 1, background: modo === m ? "#1a3a2a" : "#f0fdf4", color: modo === m ? "#4ade80" : "#374151", border: modo === m ? "none" : "1.5px solid #dcfce7", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </Card>
 
-      {N < 2 ? (
-        <Aviso>Agregá clubes a la competencia y asigná participantes en la pestaña "Participantes".</Aviso>
-      ) : (
-        <Card>
-          <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {Array.from({ length: realN }, (_, i) => {
-              const selId   = assigned[i];
-              const selClub = clubes.find(c => c.docId === selId);
-              const opts    = clubes.filter(c => !assigned.some((a, j) => j !== i && a === c.docId));
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <NumBadge n={i + 1} fijo={N % 2 === 0 && i === realN - 1} />
-                  <div style={{ width: 34, height: 34, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {selClub ? <LogoMini club={selClub} size={32} /> : <div style={{ width: 32, height: 32, borderRadius: "50%", border: "1.5px dashed #d1fae5" }} />}
-                  </div>
-                  <select
-                    value={selId}
-                    onChange={e => setAsignado(i, e.target.value)}
-                    style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 10, padding: "9px 10px", fontSize: 13, color: selId ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}
-                  >
-                    <option value="">— Sin asignar —</option>
-                    {opts.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
-                  </select>
-                </div>
-              );
-            })}
-            {N !== realN && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <NumBadge n={N} fijo />
-                <div style={{ width: 32, height: 32 }} />
-                <div style={{ flex: 1, border: "1px solid #fde047", borderRadius: 10, padding: "9px 14px", fontSize: 13, fontWeight: 700, color: "#854d0e", background: "#fefce8" }}>
-                  LIBRE (el número más alto no juega)
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {N >= 2 && (
-        <Card>
-          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
-            <Switch value={idaYVuelta} onChange={setIdaYVuelta} />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>Ida y vuelta</div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>
-                {idaYVuelta
-                  ? `${rondas.length / 2} fechas ida + ${rondas.length / 2} vuelta = ${rondas.length} fechas`
-                  : `${rondas.length} fechas`}
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {todosAsignados && hayPareja && rondas.length > 0 && (
+      {modo === "automatico" && (
         <>
-          <SeccionLabel>Fixture — {totalReales} partidos · {rondas.length} fechas</SeccionLabel>
-          {rondas.map((ronda, ji) => {
-            const realesEnFecha = ronda.filter(([l, v]) => l !== null && v !== null);
-            const libreId  = ronda.find(([l, v]) => l === null || v === null)?.find(x => x !== null) ?? null;
-            const libreClub = libreId ? clubes.find(c => c.docId === libreId) : null;
-            return (
-              <Card key={ji}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#f0fdf4", borderBottom: "1px solid #dcfce7" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#1a3a2a", whiteSpace: "nowrap" }}>Fecha {ji + 1}</span>
-                  <span style={{ color: "#9ca3af", fontSize: 14 }}>—</span>
-                  <input
-                    type="date" value={fechas[ji] || ""} onChange={e => setFecha(ji, e.target.value)}
-                    style={{ border: "none", background: "transparent", fontSize: 12, color: "#374151", cursor: "pointer", outline: "none", flex: 1 }}
-                  />
-                </div>
-                <div style={{ padding: "8px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-                  {realesEnFecha.map(([lId, vId], pi) => {
-                    const lClub = clubes.find(c => c.docId === lId);
-                    const vClub = clubes.find(c => c.docId === vId);
-                    return (
-                      <div key={pi} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: "#111827", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lClub?.nombre ?? "—"}</span>
-                          <LogoMini club={lClub} size={24} />
-                        </div>
-                        <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600, minWidth: 24, textAlign: "center" }}>vs</span>
-                        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                          <LogoMini club={vClub} size={24} />
-                          <span style={{ fontSize: 13, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vClub?.nombre ?? "—"}</span>
-                        </div>
+          <SeccionLabel>Asignación de equipos</SeccionLabel>
+          {N < 2 ? (
+            <Aviso>Agregá clubes a la competencia y asigná participantes en la pestaña "Participantes".</Aviso>
+          ) : (
+            <Card>
+              <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                {Array.from({ length: N }, (_, i) => {
+                  const selId   = assigned[i];
+                  const selClub = clubes.find(c => c.docId === selId);
+                  const opts    = clubes.filter(c => !assigned.some((a, j) => j !== i && a === c.docId));
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <NumBadge n={i + 1} fijo={N % 2 === 0 && i === N - 1} />
+                      <div style={{ width: 34, height: 34, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {selClub ? <LogoMini club={selClub} size={32} /> : <div style={{ width: 32, height: 32, borderRadius: "50%", border: "1.5px dashed #d1fae5" }} />}
                       </div>
-                    );
-                  })}
-                  {libreClub && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 2 }}>
-                      <LogoMini club={libreClub} size={20} />
-                      <span style={{ fontSize: 12, color: "#374151" }}>{libreClub.nombre}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, background: "#fef9c3", color: "#854d0e", padding: "2px 8px", borderRadius: 20 }}>LIBRE</span>
+                      <select value={selId} onChange={e => setAsignado(i, e.target.value)}
+                        style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 10, padding: "9px 10px", fontSize: 13, color: selId ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}>
+                        <option value="">— Sin asignar —</option>
+                        {opts.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+                      </select>
                     </div>
-                  )}
+                  );
+                })}
+              </div>
+            </Card>
+          )}
+
+          {N >= 2 && (
+            <Card>
+              <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                <Switch value={idaYVuelta} onChange={setIdaYVuelta} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>Ida y vuelta</div>
+                  <div style={{ fontSize: 11, color: "#6b7280" }}>
+                    {idaYVuelta
+                      ? `${rondas.length / 2} fechas ida + ${rondas.length / 2} vuelta = ${rondas.length} fechas`
+                      : `${rondas.length} fechas`}
+                  </div>
                 </div>
-              </Card>
-            );
-          })}
+              </div>
+            </Card>
+          )}
+
+          {todosAsignados && hayPareja && rondas.length > 0 && (
+            <>
+              <SeccionLabel>
+                Fixture — {totalRealesAuto} partidos · {rondasVisibles.length} fecha{rondasVisibles.length !== 1 ? "s" : ""}
+                {fechasBorradas.size > 0 && <span style={{ fontWeight: 400, color: "#dc2626", fontSize: 11 }}> ({fechasBorradas.size} eliminada{fechasBorradas.size !== 1 ? "s" : ""})</span>}
+              </SeccionLabel>
+              {rondas.map((ronda, ji) => {
+                if (fechasBorradas.has(ji)) return null;
+                const jornadaVis    = rondas.slice(0, ji + 1).filter((_, k) => !fechasBorradas.has(k)).length;
+                const realesEnFecha = ronda.filter(([l, v]) => l !== null && v !== null);
+                const libreId       = ronda.find(([l, v]) => l === null || v === null)?.find(x => x !== null) ?? null;
+                const libreClub     = libreId ? clubes.find(c => c.docId === libreId) : null;
+                return (
+                  <Card key={ji}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#f0fdf4", borderBottom: "1px solid #dcfce7" }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#1a3a2a", whiteSpace: "nowrap" }}>Fecha {jornadaVis}</span>
+                      <span style={{ color: "#9ca3af", fontSize: 14 }}>—</span>
+                      <input type="date" value={fechas[ji] || ""} onChange={e => setFecha(ji, e.target.value)}
+                        style={{ border: "none", background: "transparent", fontSize: 12, color: "#374151", cursor: "pointer", outline: "none", flex: 1 }} />
+                      <button onClick={() => borrarFecha(ji)} title="Eliminar esta fecha"
+                        style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap" }}>
+                        ✕ Borrar
+                      </button>
+                    </div>
+                    <div style={{ padding: "8px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                      {realesEnFecha.map(([lId, vId], pi) => {
+                        const lClub = clubes.find(c => c.docId === lId);
+                        const vClub = clubes.find(c => c.docId === vId);
+                        return (
+                          <div key={pi} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", minWidth: 0 }}>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: "#111827", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lClub?.nombre ?? "—"}</span>
+                              <LogoMini club={lClub} size={24} />
+                            </div>
+                            <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600, minWidth: 24, textAlign: "center" }}>vs</span>
+                            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                              <LogoMini club={vClub} size={24} />
+                              <span style={{ fontSize: 13, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vClub?.nombre ?? "—"}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {libreClub && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 2 }}>
+                          <LogoMini club={libreClub} size={20} />
+                          <span style={{ fontSize: 12, color: "#374151" }}>{libreClub.nombre}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, background: "#fef9c3", color: "#854d0e", padding: "2px 8px", borderRadius: 20 }}>LIBRE</span>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+            </>
+          )}
         </>
+      )}
+
+      {modo === "manual" && (
+        <ManualFixtureEditor
+          clubes={clubes}
+          fechasManual={fechasManual}
+          setFechasManual={setFechasManual}
+          totalRealesManual={totalRealesManual}
+        />
       )}
 
       {error && <Aviso tipo="error">{error}</Aviso>}
       {categorias.length === 0 && (
         <Aviso>Agregá al menos una categoría en la competencia antes de publicar.</Aviso>
       )}
-      {todosAsignados && hayPareja && totalReales > 0 && categorias.length > 0 && (
-        <button
-          onClick={publicar} disabled={publicando}
-          style={{ background: publicando ? "#6b7280" : "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 12, padding: "15px 16px", cursor: publicando ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, width: "100%", marginTop: 4 }}
-        >
-          {publicando ? "Publicando..." : `🚀 Publicar torneo · ${totalReales} partidos × ${categorias.length} categoría${categorias.length !== 1 ? "s" : ""}`}
+      {puedePublicar && (
+        <button onClick={publicar} disabled={publicando}
+          style={{ background: publicando ? "#6b7280" : "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 12, padding: "15px 16px", cursor: publicando ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, width: "100%", marginTop: 4 }}>
+          {publicando ? "Publicando..." : `🚀 Publicar torneo · ${totalActivos} partidos × ${categorias.length} categoría${categorias.length !== 1 ? "s" : ""}`}
         </button>
       )}
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIXTURE MANUAL
+// ══════════════════════════════════════════════════════════════════════════════
+function ManualFixtureEditor({ clubes, fechasManual, setFechasManual, totalRealesManual }) {
+  function addFecha() {
+    setFechasManual(prev => [...prev, { id: Date.now() + Math.random(), fecha: "", partidos: [] }]);
+  }
+  function removeFecha(fid) {
+    setFechasManual(prev => prev.filter(f => f.id !== fid));
+  }
+  function setFechaDate(fid, val) {
+    setFechasManual(prev => prev.map(f => f.id === fid ? { ...f, fecha: val } : f));
+  }
+  function addPartido(fid) {
+    setFechasManual(prev => prev.map(f =>
+      f.id === fid ? { ...f, partidos: [...f.partidos, { id: Date.now() + Math.random(), localId: "", visitanteId: "" }] } : f
+    ));
+  }
+  function removePartido(fid, pid) {
+    setFechasManual(prev => prev.map(f =>
+      f.id === fid ? { ...f, partidos: f.partidos.filter(p => p.id !== pid) } : f
+    ));
+  }
+  function setPartidoTeam(fid, pid, side, clubId) {
+    setFechasManual(prev => prev.map(f =>
+      f.id !== fid ? f : {
+        ...f,
+        partidos: f.partidos.map(p =>
+          p.id !== pid ? p : { ...p, [side === "local" ? "localId" : "visitanteId"]: clubId }
+        )
+      }
+    ));
+  }
+
+  if (clubes.length < 2) {
+    return <Aviso>Agregá clubes a la competencia y asigná participantes en la pestaña "Participantes".</Aviso>;
+  }
+
+  return (
+    <>
+      <SeccionLabel>
+        Fixture manual{totalRealesManual > 0 ? ` — ${totalRealesManual} partido${totalRealesManual !== 1 ? "s" : ""}` : ""}
+      </SeccionLabel>
+
+      {fechasManual.length === 0 && (
+        <Aviso>Creá fechas y agregá los partidos de cada jornada.</Aviso>
+      )}
+
+      {fechasManual.map((fd, fi) => (
+        <Card key={fd.id}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#f0fdf4", borderBottom: "1px solid #dcfce7" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#1a3a2a", whiteSpace: "nowrap" }}>Fecha {fi + 1}</span>
+            <span style={{ color: "#9ca3af", fontSize: 14 }}>—</span>
+            <input type="date" value={fd.fecha} onChange={e => setFechaDate(fd.id, e.target.value)}
+              style={{ border: "none", background: "transparent", fontSize: 12, color: "#374151", cursor: "pointer", outline: "none", flex: 1 }} />
+            <button onClick={() => removeFecha(fd.id)} title="Eliminar fecha"
+              style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap" }}>
+              ✕ Borrar
+            </button>
+          </div>
+          <div style={{ padding: "8px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {fd.partidos.map(p => {
+              const usedOtros = new Set(
+                fd.partidos.filter(x => x.id !== p.id).flatMap(x => [x.localId, x.visitanteId].filter(Boolean))
+              );
+              const optsLocal = clubes.filter(c => c.docId === p.localId || (!usedOtros.has(c.docId) && c.docId !== p.visitanteId));
+              const optsVisit = clubes.filter(c => c.docId === p.visitanteId || (!usedOtros.has(c.docId) && c.docId !== p.localId));
+              return (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <select value={p.localId} onChange={e => setPartidoTeam(fd.id, p.id, "local", e.target.value)}
+                    style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 8, padding: "8px 10px", fontSize: 12, color: p.localId ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}>
+                    <option value="">— Local —</option>
+                    {optsLocal.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+                  </select>
+                  <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>vs</span>
+                  <select value={p.visitanteId} onChange={e => setPartidoTeam(fd.id, p.id, "visitante", e.target.value)}
+                    style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 8, padding: "8px 10px", fontSize: 12, color: p.visitanteId ? "#111827" : "#9ca3af", background: "#f0fdf4", outline: "none" }}>
+                    <option value="">— Visitante —</option>
+                    {optsVisit.map(c => <option key={c.docId} value={c.docId}>{c.nombre}</option>)}
+                  </select>
+                  <button onClick={() => removePartido(fd.id, p.id)} title="Eliminar partido"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 18, lineHeight: 1, padding: "0 4px", flexShrink: 0 }}>
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+            <button onClick={() => addPartido(fd.id)}
+              style={{ background: "#f0fdf4", color: "#166534", border: "1.5px dashed #86efac", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, width: "100%", marginTop: 2 }}>
+              + Agregar partido
+            </button>
+          </div>
+        </Card>
+      ))}
+
+      <button onClick={addFecha}
+        style={{ background: "#1a3a2a", color: "#4ade80", border: "none", borderRadius: 12, padding: "13px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, width: "100%", marginTop: 4 }}>
+        + Agregar fecha
+      </button>
     </>
   );
 }
@@ -287,6 +434,8 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId, onEditarFi
   const [hayResultados, setHayResultados] = useState(null);
   const [modalConfEdit, setModalConfEdit] = useState(false);
   const [editando,      setEditando]      = useState(false);
+  const [exportando,    setExportando]    = useState(false);
+  const [errorExport,   setErrorExport]   = useState("");
 
   useEffect(() => {
     verificarResultados();
@@ -344,6 +493,14 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId, onEditarFi
     setModalGoles(prev => prev?.docId === partido.docId ? { ...prev, ...datos } : prev);
   }
 
+  async function exportarFixture() {
+    setExportando(true); setErrorExport("");
+    try {
+      await exportarFixtureExcel({ zonaRef, zona, categorias, clubes });
+    } catch (e) { setErrorExport(e.message); }
+    finally { setExportando(false); }
+  }
+
   if (categorias.length === 0) return <EmptyState emoji="📋" titulo="Sin categorías" descripcion="Este torneo no tiene categorías configuradas" />;
 
   const jornadaNumbers = [...new Set(partidos.map(p => p.jornada))].sort((a, b) => a - b);
@@ -352,6 +509,17 @@ function PostPublicacion({ zonaRef, zona, clubes, categorias, ligaId, onEditarFi
 
   return (
     <>
+      {/* Exportar fixture */}
+      <button onClick={exportarFixture} disabled={exportando}
+        style={{ background: "#f0fdf4", color: "#166534", border: "1.5px solid #4ade80", borderRadius: 12, padding: "11px 16px", cursor: exportando ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, width: "100%", marginBottom: 4 }}>
+        {exportando ? "Exportando..." : "📥 Exportar fixture a Excel"}
+      </button>
+      {errorExport && (
+        <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626", marginBottom: 4 }}>
+          {errorExport}
+        </div>
+      )}
+
       {/* Editar fixture */}
       {hayResultados === false && (
         <button

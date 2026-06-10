@@ -366,37 +366,93 @@ function VistaEquipo({ club, ligaId, catId, partidos, clubes, onBack }) {
 }
 
 // ── Tabs de contenido ─────────────────────────────────────────────────────────
-function TabPosiciones({ clubes, partidos, sanciones, pV, onVerEquipo }) {
+function TabPosiciones({ clubes, partidos, sanciones, pV, onVerEquipo, esResumen }) {
   const tabla = useMemo(() => calcularTabla(clubes, partidos, sanciones, pV), [clubes, partidos, sanciones, pV]);
   const cols  = "20px 1fr 36px 28px 24px 24px 24px 32px";
+
+  const ultimaFecha = useMemo(() => {
+    const jugados = partidos.filter(p => !p.esLibre && p.jugado);
+    if (jugados.length === 0) return null;
+    const maxJornada = Math.max(...jugados.map(p => p.jornada));
+    const fps = partidos
+      .filter(p => !p.esLibre && p.jornada === maxJornada)
+      .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+    return { jornada: maxJornada, partidos: fps };
+  }, [partidos]);
+
   if (clubes.length === 0) return <div style={{ textAlign: "center", padding: 24, color: "#9ca3af", fontSize: 13 }}>Sin clubes registrados</div>;
+
+  const fcRaw = ultimaFecha?.partidos.find(p => p.fecha)?.fecha;
+  const fcStr = fcRaw ? ` — ${fcRaw.split("-").reverse().join("/")}` : "";
+
   return (
-    <Card>
-      <FilaHeader cols={cols}>
-        <Th>#</Th><Th>Club</Th>
-        {["Pts", "PJ", "G", "E", "P", "DG"].map(h => <Th key={h} center>{h}</Th>)}
-      </FilaHeader>
-      {tabla.map((club, i) => (
-        <FilaData key={club.docId} cols={cols} bg={i === 0 ? "#f0fdf4" : "#fff"} onClick={onVerEquipo ? () => onVerEquipo(club) : undefined}>
-          <Td color="#9ca3af">{i + 1}</Td>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden", minWidth: 0 }}>
-            <Escudo club={club} size={22} />
-            <span style={{ fontWeight: 600, fontSize: 12, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{club.nombre}</span>
-          </div>
-          <div style={{ textAlign: "center" }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{club.pts}</span>
-            {club.descuento > 0 && <span style={{ fontSize: 9, color: "#dc2626" }}> −{club.descuento}</span>}
-          </div>
-          <Td center color="#374151">{club.pj}</Td>
-          <Td center color="#374151">{club.g}</Td>
-          <Td center color="#374151">{club.e}</Td>
-          <Td center color="#374151">{club.p}</Td>
-          <Td center bold color={club.dg > 0 ? "#15803d" : club.dg < 0 ? "#dc2626" : "#374151"}>
-            {club.dg > 0 ? "+" : ""}{club.dg}
-          </Td>
-        </FilaData>
-      ))}
-    </Card>
+    <>
+      <Card>
+        <FilaHeader cols={cols}>
+          <Th>#</Th><Th>Club</Th>
+          {["Pts", "PJ", "G", "E", "P", "DG"].map(h => <Th key={h} center>{h}</Th>)}
+        </FilaHeader>
+        {tabla.map((club, i) => (
+          <FilaData key={club.docId} cols={cols} bg={i === 0 ? "#f0fdf4" : "#fff"} onClick={onVerEquipo ? () => onVerEquipo(club) : undefined}>
+            <Td color="#9ca3af">{i + 1}</Td>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden", minWidth: 0 }}>
+              <Escudo club={club} size={22} />
+              <span style={{ fontWeight: 600, fontSize: 12, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{club.nombre}</span>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{club.pts}</span>
+              {club.descuento > 0 && <span style={{ fontSize: 9, color: "#dc2626" }}> −{club.descuento}</span>}
+            </div>
+            <Td center color="#374151">{club.pj}</Td>
+            <Td center color="#374151">{club.g}</Td>
+            <Td center color="#374151">{club.e}</Td>
+            <Td center color="#374151">{club.p}</Td>
+            <Td center bold color={club.dg > 0 ? "#15803d" : club.dg < 0 ? "#dc2626" : "#374151"}>
+              {club.dg > 0 ? "+" : ""}{club.dg}
+            </Td>
+          </FilaData>
+        ))}
+      </Card>
+      {ultimaFecha && !esResumen && (
+        <div style={{ marginTop: 12 }}>
+          <Card>
+            <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #f0fdf4" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
+                Última fecha jugada
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#111827" }}>
+                Fecha {ultimaFecha.jornada}{fcStr}
+              </div>
+            </div>
+            {ultimaFecha.partidos.map(p => {
+              const local     = clubes.find(c => c.docId === p.localId);
+              const visitante = clubes.find(c => c.docId === p.visitanteId);
+              if (!local || !visitante) return null;
+              return (
+                <div key={p.docId} style={{ display: "flex", alignItems: "center", padding: "9px 14px", borderTop: "1px solid #f9fafb", gap: 8 }}>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", overflow: "hidden", minWidth: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#111827", textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{local.nombre}</span>
+                    <Escudo club={local} size={20} />
+                  </div>
+                  <div style={{ flexShrink: 0, minWidth: 76, textAlign: "center" }}>
+                    {p.jugado
+                      ? p.perdidoAmbos
+                        ? <span style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", background: "#fef2f2", padding: "3px 10px", borderRadius: 8, letterSpacing: 1 }}>W - W</span>
+                        : <span style={{ fontSize: 13, fontWeight: 700, color: "#111827", background: "#f0fdf4", padding: "3px 10px", borderRadius: 8, letterSpacing: 1 }}>{p.golesLocal} - {p.golesVisitante}</span>
+                      : <span style={{ fontSize: 11, fontWeight: 600, color: "#6b7280", background: "#f3f4f6", padding: "3px 10px", borderRadius: 8 }}>Pendiente</span>
+                    }
+                  </div>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, overflow: "hidden", minWidth: 0 }}>
+                    <Escudo club={visitante} size={20} />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{visitante.nombre}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1422,6 +1478,7 @@ function VistaZona({ liga, temporada, competencia, zona, onBack }) {
               <TabPosiciones
                 clubes={clubes} partidos={partidos} sanciones={sanciones} pV={pV}
                 onVerEquipo={catSel !== "__general__" ? setClubSel : undefined}
+                esResumen={esResumen}
               />
             )}
             {tab === "Bracket" && <TabBracket zonaRef={zonaRef} zona={zona} clubes={clubes} categorias={categorias} />}

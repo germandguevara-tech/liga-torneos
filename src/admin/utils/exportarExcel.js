@@ -1,6 +1,86 @@
 import * as XLSX from "xlsx";
 import { collection, getDocs, getDoc, doc } from "firebase/firestore";
 
+// ── Fixture ────────────────────────────────────────────────────────────────────
+export async function exportarFixtureExcel({ zonaRef, zona, categorias, clubes, grupos = [] }) {
+  const wb = XLSX.utils.book_new();
+  const hoy = new Date().toLocaleDateString("es-AR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+  }).replace(/\//g, "-");
+
+  function fechaLeg(iso) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  }
+  function resultadoStr(p) {
+    if (!p.jugado || p.golesLocal == null || p.golesVisitante == null) return "—";
+    if (p.perdidoAmbos) return "PP - PP";
+    return `${p.golesLocal} - ${p.golesVisitante}`;
+  }
+
+  const COLS = [{ wch: 26 }, { wch: 26 }, { wch: 14 }];
+  const MATCH_HEADERS = ["Local", "Visitante", "Resultado"];
+
+  const catData = await Promise.all(
+    categorias.map(async cat => {
+      const snap = await getDocs(
+        collection(doc(collection(zonaRef, "categorias"), cat.docId), "partidos")
+      );
+      const partidos = snap.docs
+        .map(d => ({ docId: d.id, ...d.data() }))
+        .filter(p => !p.esLibre)
+        .sort((a, b) => a.jornada - b.jornada || (a.orden ?? 0) - (b.orden ?? 0));
+      return { cat, partidos };
+    })
+  );
+
+  catData.forEach(({ cat, partidos }) => {
+    const wsData   = [];
+    const boldRows = [];
+
+    function addJornadas(matchList) {
+      const jornadas = [...new Set(matchList.map(p => p.jornada))].sort((a, b) => a - b);
+      jornadas.forEach(j => {
+        const jPartidos = matchList.filter(p => p.jornada === j);
+        const fc        = fechaLeg(jPartidos[0]?.fecha || "");
+        boldRows.push(wsData.length);
+        wsData.push([`Fecha ${j}${fc ? " — " + fc : ""}`, "", ""]);
+        boldRows.push(wsData.length);
+        wsData.push(MATCH_HEADERS);
+        jPartidos.forEach(p => {
+          const lN = p.localNombre     || clubes.find(c => c.docId === p.localId)?.nombre     || "—";
+          const vN = p.visitanteNombre || clubes.find(c => c.docId === p.visitanteId)?.nombre || "—";
+          wsData.push([lN, vN, resultadoStr(p)]);
+        });
+        wsData.push([]);
+      });
+    }
+
+    if (grupos.length > 0) {
+      grupos.forEach(grupo => {
+        boldRows.push(wsData.length);
+        wsData.push([grupo.nombre, "", ""]);
+        addJornadas(partidos.filter(p => p.grupoId === grupo.id));
+      });
+    } else {
+      addJornadas(partidos);
+    }
+
+    if (wsData.length === 0) return;
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    boldRows.forEach(r => boldRow(ws, r, 3));
+    ws["!cols"] = COLS;
+    XLSX.utils.book_append_sheet(wb, ws, safeName(cat.nombre));
+  });
+
+  if (wb.SheetNames.length === 0) throw new Error("Sin datos para exportar");
+
+  const nombreArchivo = zona.nombre.replace(/[\\\/\*\?\[\]\:]/g, "-");
+  XLSX.writeFile(wb, `${nombreArchivo} - fixture - ${hoy}.xlsx`);
+}
+
 const TABLA_HEADERS = ["Pos", "Club", "Pts", "PJ", "G", "E", "P", "GF", "GC", "DG"];
 
 // Anchos de columna para hoja de tabla de posiciones

@@ -1036,20 +1036,24 @@ function GrupoCard({ grupo, clubes, clubsDisponibles, onRenombrar, onAgregarClub
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB TABLAS – COPA POR CLUB: una tabla por grupo para cada categoría
 // ══════════════════════════════════════════════════════════════════════════════
-function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias, tablaConf }) {
+function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias, tablaConf, setTablaConf }) {
   const mostrarGeneral = tablaConf?.tablaGeneralActiva;
   const opciones = [
     ...categorias.map(c => ({ id: c.docId, tipo: "cat", label: c.nombre })),
     ...(mostrarGeneral ? [{ id: "__general__", tipo: "general", label: "Tabla General" }] : []),
   ];
-  const [selId,    setSelId]    = useState(opciones[0]?.id || "");
-  const [partidos, setPartidos] = useState([]);
-  const [cargando, setCargando] = useState(false);
+  const [selId,             setSelId]             = useState(opciones[0]?.id || "");
+  const [partidos,          setPartidos]          = useState([]);
+  const [sanciones,         setSanciones]         = useState([]);
+  const [cargando,          setCargando]          = useState(false);
+  const [modalSancion,      setModalSancion]      = useState(null);
+  const [pendingDelSancion, setPendingDelSancion] = useState(null);
 
+  const sel   = opciones.find(o => o.id === selId);
   const pV    = zona.puntosPorVictoria ?? 3;
   const pE    = zona.puntosPorEmpate ?? 1;
   const pVGen = tablaConf?.tablaGeneralPuntosVictoria ?? 3;
-  const pEact = selId === "__general__" ? pE : pE;
+  const pEact = pE;
   const pVact = selId === "__general__" ? pVGen : pV;
 
   useEffect(() => {
@@ -1070,9 +1074,15 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias, tablaCon
           )
         );
         setPartidos(results.flat());
+        setSanciones(tablaConf?.tablaGeneralSanciones || []);
       } else {
-        const snap = await getDocs(collection(doc(collection(zonaRef, "categorias"), selId), "partidos"));
-        setPartidos(snap.docs.map(d => ({ docId: d.id, ...d.data() })));
+        const catRef = doc(collection(zonaRef, "categorias"), selId);
+        const [pSnap, catSnap] = await Promise.all([
+          getDocs(collection(catRef, "partidos")),
+          getDoc(catRef),
+        ]);
+        setPartidos(pSnap.docs.map(d => ({ docId: d.id, ...d.data() })));
+        setSanciones(catSnap.data()?.sanciones || []);
       }
     } finally {
       setCargando(false);
@@ -1095,7 +1105,58 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias, tablaCon
         else if (p.golesLocal < p.golesVisitante) { vis.g++; loc.p++; vis.pts += pVact; }
         else                                       { loc.e++; vis.e++; loc.pts += pEact; vis.pts += pEact; }
       });
+    // m solo tiene los clubes del grupo, por lo que sanciones de otros grupos se ignoran automáticamente
+    sanciones.forEach(s => { if (m[s.clubId]) { m[s.clubId].pts -= s.puntos; m[s.clubId].descuento += s.puntos; } });
     return Object.values(m).sort((a, b) => b.pts - a.pts || (b.gf - b.gc) - (a.gf - a.gc) || b.gf - a.gf);
+  }
+
+  async function guardarSancion(san) {
+    const nuevas = typeof modalSancion === "number"
+      ? sanciones.map((s, i) => i === modalSancion ? san : s)
+      : [...sanciones, san];
+
+    let afectaGeneralNuevas;
+    if (sel.tipo === "cat") {
+      const generales = tablaConf?.tablaGeneralSanciones || [];
+      const clubIdAnterior = typeof modalSancion === "number" ? sanciones[modalSancion]?.clubId : null;
+      let sinActual = generales.filter(g => !(g.fromCatId === selId && (!clubIdAnterior || g.clubId === clubIdAnterior)));
+      if (san.afectaGeneral) {
+        sinActual = [...sinActual, { clubId: san.clubId, clubNombre: san.clubNombre, puntos: san.puntos, motivo: san.motivo, fromCatId: selId }];
+      }
+      afectaGeneralNuevas = sinActual;
+    }
+
+    await persistirSanciones(nuevas, afectaGeneralNuevas);
+    setSanciones(nuevas);
+    setModalSancion(null);
+  }
+
+  async function persistirSanciones(nuevas, afectaGeneralNuevas) {
+    if (sel.tipo === "general") {
+      setTablaConf(c => ({ ...c, tablaGeneralSanciones: nuevas }));
+      await updateDoc(zonaRef, { tablaGeneralSanciones: nuevas });
+    } else {
+      await setDoc(doc(collection(zonaRef, "categorias"), selId), { sanciones: nuevas }, { merge: true });
+      if (afectaGeneralNuevas !== undefined) {
+        setTablaConf(c => ({ ...c, tablaGeneralSanciones: afectaGeneralNuevas }));
+        await updateDoc(zonaRef, { tablaGeneralSanciones: afectaGeneralNuevas });
+      }
+    }
+  }
+
+  async function eliminarSancion() {
+    const sancion = sanciones[pendingDelSancion];
+    const nuevas  = sanciones.filter((_, i) => i !== pendingDelSancion);
+
+    let afectaGeneralNuevas;
+    if (sel.tipo === "cat" && sancion) {
+      const generales = tablaConf?.tablaGeneralSanciones || [];
+      afectaGeneralNuevas = generales.filter(g => !(g.fromCatId === selId && g.clubId === sancion.clubId));
+    }
+
+    await persistirSanciones(nuevas, afectaGeneralNuevas);
+    setSanciones(nuevas);
+    setPendingDelSancion(null);
   }
 
   if (grupos.length === 0) return <EmptyState emoji="📋" titulo="Sin grupos" descripcion="Definí los grupos en la pestaña Participantes" />;
@@ -1112,17 +1173,60 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias, tablaCon
       )}
 
       {cargando ? <Spinner /> : (
-        grupos.map(grupo => {
-          const grupoClubs    = (grupo.clubes || []).map(id => clubes.find(c => c.docId === id)).filter(Boolean);
-          const grupoPartidos = partidos.filter(p => p.grupoId === grupo.id);
-          const tabla         = computarTablaGrupo(grupoClubs, grupoPartidos);
-          return (
-            <div key={grupo.id}>
-              <SeccionLabel>{grupo.nombre}</SeccionLabel>
-              <TablaPosicionesTablas tabla={tabla} />
-            </div>
-          );
-        })
+        <>
+          {grupos.map(grupo => {
+            const grupoClubs    = (grupo.clubes || []).map(id => clubes.find(c => c.docId === id)).filter(Boolean);
+            const grupoPartidos = partidos.filter(p => p.grupoId === grupo.id);
+            const tabla         = computarTablaGrupo(grupoClubs, grupoPartidos);
+            return (
+              <div key={grupo.id}>
+                <SeccionLabel>{grupo.nombre}</SeccionLabel>
+                <TablaPosicionesTablas tabla={tabla} />
+              </div>
+            );
+          })}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+            <SeccionLabel>Descuentos de puntos</SeccionLabel>
+            <button onClick={() => setModalSancion("nueva")}
+              style={{ background: "none", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", cursor: "pointer", fontSize: 11, fontWeight: 700, padding: "3px 8px" }}>
+              + Agregar
+            </button>
+          </div>
+          {sanciones.length > 0 && (
+            <Card>
+              <div style={{ padding: "8px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+                {sanciones.map((s, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                    <span style={{ flex: 1 }}>
+                      <b>{s.clubNombre}</b> · <span style={{ color: "#dc2626", fontWeight: 700 }}>−{s.puntos} pts</span>
+                      {s.motivo && <span style={{ color: "#6b7280" }}> · {s.motivo}</span>}
+                    </span>
+                    <button onClick={() => setModalSancion(i)}
+                      style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 13 }}>✏️</button>
+                    <button onClick={() => setPendingDelSancion(i)}
+                      style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 14 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      {modalSancion !== null && (
+        <SancionModal
+          clubes={clubes}
+          sancionInicial={typeof modalSancion === "number" ? sanciones[modalSancion] : undefined}
+          onGuardar={guardarSancion}
+          onClose={() => setModalSancion(null)}
+          showAfectaGeneral={sel?.tipo === "cat" && (tablaConf?.tablaGeneralActiva ?? false)}
+        />
+      )}
+      {pendingDelSancion !== null && (
+        <ConfirmModal
+          mensaje={`Eliminás la sanción de ${sanciones[pendingDelSancion]?.puntos} pts a ${sanciones[pendingDelSancion]?.clubNombre}.`}
+          onConfirmar={eliminarSancion} onCancelar={() => setPendingDelSancion(null)} />
       )}
     </>
   );
@@ -1137,7 +1241,7 @@ function TabTablas({ zonaRef, zona, grupos, clubes, categorias, tablaConf, setTa
     return (
       <TabTablasCopaClub
         zonaRef={zonaRef} zona={zona} grupos={grupos}
-        clubes={clubes} categorias={categorias} tablaConf={tablaConf}
+        clubes={clubes} categorias={categorias} tablaConf={tablaConf} setTablaConf={setTablaConf}
       />
     );
   }

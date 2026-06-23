@@ -1243,7 +1243,7 @@ function TabTablasCopaClub({ zonaRef, zona, grupos, clubes, categorias }) {
         return (
           <div key={grupo.id}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>{grupo.nombre}</div>
-            <TabPosiciones clubes={grupoClubs} partidos={grupoPartidos} sanciones={sanciones} pV={pVActivo} />
+            <TabPosiciones clubes={grupoClubs} partidos={grupoPartidos} sanciones={sanciones} pV={pVActivo} esResumen={selId === "__general__"} />
           </div>
         );
       })}

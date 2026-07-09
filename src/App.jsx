@@ -102,8 +102,9 @@ function calcularTabla(clubes, partidos, sanciones = [], pV = 3, pE = 1) {
       else if (propios === ajenos) e++;
       else p++;
     });
-    const san      = sanciones.find(s => s.clubId === club.docId);
-    const descuento = san ? (san.puntos || san.pts || 0) : 0;
+    const descuento = sanciones
+      .filter(s => s.clubId === club.docId)
+      .reduce((sum, s) => sum + (s.puntos || s.pts || 0), 0);
     const pts       = Math.max(0, g * pV + e * pE - descuento);
     return { ...club, pj: jugados.length, g, e, p, gf, gc, dg: gf - gc, descuento, pts };
   }).sort((a, b) => b.pts - a.pts || b.dg - a.dg || b.gf - a.gf);

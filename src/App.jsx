@@ -1793,14 +1793,12 @@ function PartidoPlayOffPublico({ partido, clubLocal, clubVisitante, pierna, sinB
   const jugado   = pierna === "ida" ? partido.jugado : partido.jugadoVuelta;
   const esModoClub = partido.ptsLocal != null || partido.ptsLocalVuelta != null;
 
-  const escudoLocal = pierna === "ida" ? clubLocal    : clubVisitante;
-  const escudoVis   = pierna === "ida" ? clubVisitante : clubLocal;
-  const nomLocal = pierna === "ida"
-    ? (clubLocal?.nombre    || partido.localNombre)
-    : (clubVisitante?.nombre || partido.visitanteNombre);
-  const nomVis = pierna === "ida"
-    ? (clubVisitante?.nombre || partido.visitanteNombre)
-    : (clubLocal?.nombre    || partido.localNombre);
+  const escudoLocal = clubLocal;
+  const escudoVis   = clubVisitante;
+  const nomLocal = clubLocal?.nombre
+    || (pierna === "ida" ? partido.localNombre : partido.visitanteNombre);
+  const nomVis = clubVisitante?.nombre
+    || (pierna === "ida" ? partido.visitanteNombre : partido.localNombre);
 
   let resultNode;
   if (jugado && esModoClub) {

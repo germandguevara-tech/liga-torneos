@@ -137,7 +137,7 @@ function safeName(nombre) {
   return (nombre || "Hoja").replace(/[\\\/\*\?\[\]\:]/g, "-").slice(0, 31);
 }
 
-export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, pV, pE }) {
+export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, tablaAcumConf, compRef, pV, pE }) {
   const wb = XLSX.utils.book_new();
   const hoy = new Date().toLocaleDateString("es-AR", {
     day: "2-digit", month: "2-digit", year: "numeric"
@@ -232,6 +232,30 @@ export async function exportarTablasExcel({ zonaRef, zona, tipo, categorias, clu
       }
       ws['!cols'] = TABLA_COLS;
       XLSX.utils.book_append_sheet(wb, ws, "Tabla General");
+    }
+  }
+
+  // Hoja de tabla acumulada (suma partidos de otras zonas seleccionadas)
+  if (tipo !== "copa_club" && tablaAcumConf?.tablaAcumuladaActiva) {
+    const zonaIds = tablaAcumConf.tablaAcumuladaZonas || [];
+    if (zonaIds.length > 0 && categorias.length > 0) {
+      const allPartidos = (await Promise.all(
+        zonaIds.flatMap(zId =>
+          categorias.map(cat => {
+            const catRef = doc(collection(doc(collection(compRef, "zonas"), zId), "categorias"), cat.docId);
+            return getDocs(collection(catRef, "partidos"))
+              .then(s => s.docs.map(d => ({ docId: d.id, ...d.data() })))
+              .catch(() => []);
+          })
+        )
+      )).flat();
+      const sanciones = tablaAcumConf.tablaAcumuladaSanciones || [];
+
+      const wsData = [TABLA_HEADERS, ...tablaToRows(computarTabla(clubes, allPartidos, sanciones, pV, pE))];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      boldRow(ws, 0, TABLA_HEADERS.length);
+      ws['!cols'] = TABLA_COLS;
+      XLSX.utils.book_append_sheet(wb, ws, "Tabla Acumulada");
     }
   }
 

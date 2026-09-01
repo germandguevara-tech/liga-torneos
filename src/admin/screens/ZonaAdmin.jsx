@@ -281,6 +281,8 @@ export default function ZonaAdmin({ liga, temporada, competencia, zona, onBack }
               clubes={clubesZona}
               grupos={grupos}
               tablaConf={tablaConf}
+              tablaAcumConf={tablaAcumConf}
+              compRef={compRef}
               pV={config.puntosPorVictoria ?? 3}
               pE={config.puntosPorEmpate ?? 1}
             />
@@ -2750,7 +2752,7 @@ function LogoClub({ club, size = 40 }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // EXPORTAR A EXCEL
 // ══════════════════════════════════════════════════════════════════════════════
-function ExportarSection({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, pV, pE }) {
+function ExportarSection({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, tablaAcumConf, compRef, pV, pE }) {
   const [exportandoTablas, setExportandoTablas] = useState(false);
   const [exportandoFecha,  setExportandoFecha]  = useState(false);
   const [jornada,          setJornada]          = useState("1");
@@ -2762,7 +2764,7 @@ function ExportarSection({ zonaRef, zona, tipo, categorias, clubes, grupos, tabl
     setError("");
     setExportandoTablas(true);
     try {
-      await exportarTablasExcel({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, pV, pE });
+      await exportarTablasExcel({ zonaRef, zona, tipo, categorias, clubes, grupos, tablaConf, tablaAcumConf, compRef, pV, pE });
     } catch (e) {
       setError("Error al exportar tablas: " + e.message);
     } finally {
